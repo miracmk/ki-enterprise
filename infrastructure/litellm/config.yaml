@@ -1,0 +1,357 @@
+model_list:
+  # ============================================================
+  # OpenAI
+  # ============================================================
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: text-embedding-3-large
+    litellm_params:
+      model: openai/text-embedding-3-large
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ============================================================
+  # Anthropic
+  # ============================================================
+  - model_name: claude-3.5-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3.5-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ============================================================
+  # Google Gemini (Google AI Studio)
+  # ============================================================
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-2.0-flash-lite
+    litellm_params:
+      model: gemini/gemini-2.0-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: text-embedding-004
+    litellm_params:
+      model: gemini/gemini-embedding-001
+      api_key: os.environ/GEMINI_API_KEY
+
+  # ============================================================
+  # Mistral AI
+  # ============================================================
+  - model_name: mistral-large
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: mistral-small
+    litellm_params:
+      model: mistral/mistral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: mistral-embed
+    litellm_params:
+      model: mistral/mistral-embed
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: codestral
+    litellm_params:
+      model: mistral/codestral-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  # ============================================================
+  # Groq AI
+  # ============================================================
+  - model_name: groq-llama-3.1-70b
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 25
+  - model_name: groq-llama-3.1-8b
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 25
+  - model_name: groq-mixtral
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+  - model_name: groq-gemma2
+    litellm_params:
+      model: groq/qwen/qwen3-32b
+      api_key: os.environ/GROQ_API_KEY
+
+  # ============================================================
+  # KI Cloud - birincil model alias'i (bkz. litellm_settings.fallbacks)
+  # Motto: "free as possible" - once ucretsiz+en guclu (Groq gpt-oss-120b),
+  # sonra kesintisiz calisma icin sirali fallback zinciri. Tum core/*
+  # servisleri (AI Gateway, Executive Board) LOKAL Ollama YERINE bu alias'i
+  # kullanir - hicbiri host RAM'i tuketmez, hepsi bulut/cloud saglayicidir.
+  # ============================================================
+  - model_name: ki-cloud
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+      # Groq free-tier limitlerinin altinda tutulur - CEO/Executive Board/
+      # Department Manager/Worker Pool hepsi bu alias'i paylastigi icin
+      # merkezi bir limit, her serviste ayri rate-limit kodu yazmaktan
+      # (ve unutmaktan) daha guvenilir. Asilirsa LiteLLM otomatik olarak
+      # asagidaki fallback zincirine gecer (bkz. litellm_settings.fallbacks).
+      rpm: 25
+
+  # ============================================================
+  # OpenRouter (Free Models Only)
+  # ============================================================
+  - model_name: openrouter-cognitivecomputations-dolphin-mistral-24b-venice-edition
+    litellm_params:
+      model: openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-cohere-north-mini-code
+    litellm_params:
+      model: openrouter/cohere/north-mini-code:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-google-gemma-4-26b-a4b-it
+    litellm_params:
+      model: openrouter/google/gemma-4-26b-a4b-it:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-google-gemma-4-31b-it
+    litellm_params:
+      model: openrouter/google/gemma-4-31b-it:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-liquid-lfm-2-5-1-2b-instruct
+    litellm_params:
+      model: openrouter/liquid/lfm-2.5-1.2b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-liquid-lfm-2-5-1-2b-thinking
+    litellm_params:
+      model: openrouter/liquid/lfm-2.5-1.2b-thinking:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-meta-llama-llama-3-2-3b-instruct
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.2-3b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-meta-llama-llama-3-3-70b-instruct
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nousresearch-hermes-3-llama-3-1-405b
+    litellm_params:
+      model: openrouter/nousresearch/hermes-3-llama-3.1-405b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-3-nano-30b-a3b
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-3-nano-omni-30b-a3b-reasoning
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-3-super-120b-a12b
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-3-ultra-550b-a55b
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-3-5-content-safety
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3.5-content-safety:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-nano-12b-v2-vl
+    litellm_params:
+      model: openrouter/nvidia/nemotron-nano-12b-v2-vl:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-nvidia-nemotron-nano-9b-v2
+    litellm_params:
+      model: openrouter/nvidia/nemotron-nano-9b-v2:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-openai-gpt-oss-120b
+    litellm_params:
+      model: openrouter/openai/gpt-oss-120b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-openai-gpt-oss-20b
+    litellm_params:
+      model: openrouter/openai/gpt-oss-20b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-poolside-laguna-m-1
+    litellm_params:
+      model: openrouter/poolside/laguna-m.1:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-poolside-laguna-xs-2-1
+    litellm_params:
+      model: openrouter/poolside/laguna-xs-2.1:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-poolside-laguna-xs-2
+    litellm_params:
+      model: openrouter/poolside/laguna-xs.2:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-qwen-qwen3-coder
+    litellm_params:
+      model: openrouter/qwen/qwen3-coder:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-qwen-qwen3-next-80b-a3b-instruct
+    litellm_params:
+      model: openrouter/qwen/qwen3-next-80b-a3b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: openrouter-tencent-hy3
+    litellm_params:
+      model: openrouter/tencent/hy3:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ============================================================
+  # HuggingFace
+  # ============================================================
+  - model_name: huggingface-qwen2.5-7b
+    litellm_params:
+      model: huggingface/Qwen/Qwen2.5-7B-Instruct
+      api_key: os.environ/HUGGINGFACE_API_KEY
+  - model_name: huggingface-llama
+    litellm_params:
+      model: huggingface/meta-llama/Meta-Llama-3.1-8B-Instruct
+      api_key: os.environ/HUGGINGFACE_API_KEY
+
+  # ============================================================
+  # Ollama (Cloud)
+  # ============================================================
+  - model_name: ollama-llama3.1
+    litellm_params:
+      model: ollama/gpt-oss:20b
+      api_key: os.environ/OLLAMA_CLOUD_API_KEY
+      api_base: https://ollama.com
+
+  # ============================================================
+  # Ollama (Local, self-hosted - ucretsiz)
+  # ============================================================
+  - model_name: local-llama3.1
+    litellm_params:
+      model: ollama/llama3.1:latest
+      api_base: http://host.docker.internal:11434
+  - model_name: local-llama3.2-3b
+    litellm_params:
+      model: ollama/llama3.2:3b
+      api_base: http://host.docker.internal:11434
+  - model_name: local-nomic-embed
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://host.docker.internal:11434
+  - model_name: local-llama3.2-1b
+    litellm_params:
+      model: ollama/llama3.2:1b
+      api_base: http://host.docker.internal:11434
+
+  # ============================================================
+  # Eden AI (Free Models Only)
+  # ============================================================
+  - model_name: edenai-gpt-4o-mini
+    litellm_params:
+      model: edenai/openai/gpt-4o-mini
+      api_key: os.environ/EDENAI_API_KEY
+  - model_name: edenai-claude-3-haiku
+    litellm_params:
+      model: edenai/anthropic/claude-3-haiku
+      api_key: os.environ/EDENAI_API_KEY
+  - model_name: edenai-gemini-1.5-flash
+    litellm_params:
+      model: edenai/google/gemini-1.5-flash
+      api_key: os.environ/EDENAI_API_KEY
+
+  # ============================================================
+  # Cloudflare Workers AI
+  # ============================================================
+  - model_name: cf-llama-3.1-8b
+    litellm_params:
+      model: cloudflare/@cf/meta/llama-3.1-8b-instruct-fp8
+      api_key: os.environ/CLOUDFLARE_API_TOKEN
+      api_base: https://api.cloudflare.com/client/v4/accounts/fb77da0b6710a7f7ade4a4c3714d449c/ai/run
+  - model_name: cf-llama-3.1-70b
+    litellm_params:
+      model: cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast
+      api_key: os.environ/CLOUDFLARE_API_TOKEN
+      api_base: https://api.cloudflare.com/client/v4/accounts/fb77da0b6710a7f7ade4a4c3714d449c/ai/run
+  - model_name: cf-mistral-7b
+    litellm_params:
+      model: cloudflare/@cf/mistralai/mistral-small-3.1-24b-instruct
+      api_key: os.environ/CLOUDFLARE_API_TOKEN
+      api_base: https://api.cloudflare.com/client/v4/accounts/fb77da0b6710a7f7ade4a4c3714d449c/ai/run
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  turn_off_message_logging: false
+  disable_end_user_cost_tracking: true
+  disable_adding_anthropic_headers: true
+  use_azure: false
+  use_vertex_ai: false
+  use_aws: false
+  # num_retries dusuk tutulur (fallback zinciri asil guvenceyi sagliyor - her
+  # model icin 3x retry + 4 modelli zincir = asiri uzun bekleme riski olurdu).
+  # request_timeout, cagiran servislerin kendi httpx timeout'larina (90s) yakin
+  # tutulur ki bir modelin takilmasi butun zinciri gereksiz yere uzatmasin.
+  num_retries: 1
+  request_timeout: 90
+  fallbacks:
+    - ki-cloud: ["groq-llama-3.1-70b", "ollama-llama3.1", "groq-llama-3.1-8b"]
+
+general_settings:
+  master_key: ***REMOVED-LITELLM-MASTER-KEY***
+  database_url: postgresql://ki:StrongPassword123!@ki-enterprise-postgres:5432/litellm
+  otel: false
+  max_request_size_mb: 150
+  max_request_body_size_limit: 157286400
+  allowed_routes:
+    - /v1/chat/completions
+    - /v1/completions
+    - /v1/embeddings
+    - /v1/models
+    - /model/info
+    - /key/generate
+    - /key/info
+    - /user/info
+  alerting: []
+  proxy_budget_rescheduler_min_time: 0
+  proxy_budget_rescheduler_max_time: 0
+  disable_spend_logs: true
+  disable_add_log_to_database: true
+  disable_load_cache_before_adding_spend_logs: true
+  disable_prometheus: true
+  disable_adding_master_key_hash_to_db: true
+  disable_adding_worker_key_hash_to_db: true
+  disable_adding_master_key_sk_to_db: true
+  disable_adding_worker_key_sk_to_db: true

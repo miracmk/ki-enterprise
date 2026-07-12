@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ki-enterprise-redis
+    restart: unless-stopped
+    mem_limit: 96m
+    command: redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
+    ports:
+      - "16379:6379"
+    volumes:
+      - ../../storage/redis:/data
+    networks:
+      - ki-enterprise
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  ki-enterprise:
+    external: true

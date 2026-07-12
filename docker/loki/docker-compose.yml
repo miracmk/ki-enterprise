@@ -1,0 +1,21 @@
+services:
+  loki:
+    image: grafana/loki:latest
+    container_name: ki-enterprise-loki
+    restart: unless-stopped
+
+    command: -config.file=/etc/loki/config.yml
+
+    ports:
+      - "13100:3100"
+
+    volumes:
+      - ./config.yml:/etc/loki/config.yml
+      - ../../storage/loki:/loki
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

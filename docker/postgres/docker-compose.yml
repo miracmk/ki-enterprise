@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ki-enterprise-postgres
+    restart: unless-stopped
+    mem_limit: 256m
+    command: postgres -c shared_buffers=64MB -c max_connections=40
+    env_file:
+      - .env
+    ports:
+      - "15432:5432"
+    volumes:
+      - ../../storage/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U ki"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

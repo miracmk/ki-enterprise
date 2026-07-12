@@ -1,0 +1,31 @@
+services:
+
+  traefik:
+    image: traefik:v3.1
+
+    container_name: ki-enterprise-traefik
+
+    restart: unless-stopped
+
+    command:
+      - --providers.docker=true
+
+    ports:
+      - "18180:80"
+      - "18443:443"
+      - "18181:8080"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml
+      - ../../infrastructure/traefik/dynamic:/etc/traefik/dynamic:ro
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

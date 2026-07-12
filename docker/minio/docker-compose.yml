@@ -1,0 +1,31 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: ki-enterprise-minio
+    restart: unless-stopped
+
+    command: server /data --console-address ":9001"
+
+    environment:
+      MINIO_ROOT_USER: kiadmin
+      MINIO_ROOT_PASSWORD: StrongPassword123!
+
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+
+    volumes:
+      - ../../storage/minio:/data
+
+    networks:
+      - ki-enterprise
+
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+networks:
+  ki-enterprise:
+    external: true

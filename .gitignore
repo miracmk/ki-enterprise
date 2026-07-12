@@ -1,0 +1,16 @@
+# Secrets - never commit
+.env
+*.env
+!.env.example
+
+# Runtime data
+storage/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Logs
+*.log

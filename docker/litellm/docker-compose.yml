@@ -1,0 +1,22 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: ki-enterprise-litellm
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://ki:StrongPassword123!@ki-enterprise-postgres:5432/litellm
+      - MASTER_KEY=***REMOVED-LITELLM-MASTER-KEY***
+    volumes:
+      - ../../infrastructure/litellm/config.yaml:/app/config.yaml
+    entrypoint: [ "litellm" ]
+    command: [ "--config", "/app/config.yaml", "--port", "4000" ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ki-enterprise
+networks:
+  ki-enterprise:
+    external: true

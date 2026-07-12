@@ -1,0 +1,40 @@
+services:
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: ki-enterprise-temporal
+    restart: unless-stopped
+
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ki
+      POSTGRES_PWD: StrongPassword123!
+      POSTGRES_SEEDS: ki-enterprise-postgres
+
+    depends_on:
+      - temporal-ui
+
+    ports:
+      - "17233:7233"
+
+    networks:
+      - ki-enterprise
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: ki-enterprise-temporal-ui
+    restart: unless-stopped
+
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+
+    ports:
+      - "28080:8080"
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

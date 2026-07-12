@@ -1,0 +1,26 @@
+services:
+  litellm-model-updater:
+    image: alpine:3.19
+    container_name: ki-enterprise-litellm-model-updater
+    command: >
+      /bin/sh -c "
+      apk add --no-cache curl jq py3-pip docker-cli 2>/dev/null;
+      mkdir -p /opt/ki-enterprise/storage/logs;
+      echo '1 21 * * * /usr/bin/python3 /scripts/update-litellm-models.py >> /opt/ki-enterprise/storage/logs/litellm-cron.log 2>&1' > /var/spool/cron/crontabs/root;
+      echo 'LiteLLM model updater cron job baslatildi - Her gun 00:01 TSİ (21:01 UTC)'de calisacak';
+      crond -f -l 2
+      "
+    volumes:
+      - ../../infrastructure/litellm/config.yaml:/opt/ki-enterprise/infrastructure/litellm/config.yaml:rw
+      - ../../scripts/update-litellm-models.py:/scripts/update-litellm-models.py:ro
+      - ../../storage/logs:/opt/ki-enterprise/storage/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=Europe/Istanbul
+    networks:
+      - ki-enterprise
+    restart: unless-stopped
+
+networks:
+  ki-enterprise:
+    external: true

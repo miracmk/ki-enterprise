@@ -1,0 +1,19 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ki-enterprise-qdrant
+    restart: unless-stopped
+    mem_limit: 256m
+
+    ports:
+      - "16333:6333"
+
+    volumes:
+      - ../../storage/qdrant:/qdrant/storage
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

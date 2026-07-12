@@ -1,0 +1,26 @@
+http:
+  routers:
+    ki-dashboard:
+      rule: "PathPrefix(`/dashboard`)"
+      entryPoints:
+        - web
+      middlewares:
+        - ki-dashboard-auth
+        - ki-dashboard-stripprefix
+      service: ki-dashboard-svc
+
+  middlewares:
+    ki-dashboard-auth:
+      basicAuth:
+        users:
+          - "mirac:$2y$05$p9M4O9Yx.Pb6W/XhwjzVlehu1p6E03P7nO4PUUwh8YYdsu/A9nY5C"
+    ki-dashboard-stripprefix:
+      stripPrefix:
+        prefixes:
+          - "/dashboard"
+
+  services:
+    ki-dashboard-svc:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:5009"

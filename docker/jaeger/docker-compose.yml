@@ -1,0 +1,17 @@
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ki-enterprise-jaeger
+    restart: unless-stopped
+
+    ports:
+      - "16686:16686"
+      - "14317:4317"
+      - "14318:4318"
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

@@ -1,0 +1,13 @@
+services:
+  mail-service:
+    image: python:3.11-slim
+    container_name: ki-enterprise-mail-service
+    command: tail -f /dev/null
+    environment:
+      - SMTP_HOST=ki-enterprise-stalwart
+      - NATS_URL=nats://ki-enterprise-nats:4222
+    networks:
+      - ki-enterprise
+networks:
+  ki-enterprise:
+    external: true

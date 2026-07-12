@@ -1,0 +1,22 @@
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ki-enterprise-grafana
+    restart: unless-stopped
+
+    ports:
+      - "13000:3000"
+
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: StrongPassword123!
+
+    volumes:
+      - ../../storage/grafana:/var/lib/grafana
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

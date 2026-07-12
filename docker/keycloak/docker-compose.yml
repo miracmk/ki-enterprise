@@ -1,0 +1,24 @@
+services:
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+
+    container_name: ki-enterprise-keycloak
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    command:
+      - start-dev
+
+    ports:
+      - "18090:8080"
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

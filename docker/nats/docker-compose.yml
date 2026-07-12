@@ -1,0 +1,19 @@
+services:
+  nats:
+    image: nats:latest
+    container_name: ki-enterprise-nats
+    restart: unless-stopped
+
+    command:
+      - "-js"
+
+    ports:
+      - "14222:4222"
+      - "18222:8222"
+
+    networks:
+      - ki-enterprise
+
+networks:
+  ki-enterprise:
+    external: true

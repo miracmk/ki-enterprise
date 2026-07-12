@@ -1,0 +1,33 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: basic
+  otlp/jaeger:
+    endpoint: ki-enterprise-jaeger:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlphttp/loki:
+    endpoint: http://ki-enterprise-loki:3100/otlp
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      exporters: [otlphttp/loki, debug]

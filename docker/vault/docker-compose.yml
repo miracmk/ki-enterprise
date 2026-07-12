@@ -1,0 +1,44 @@
+services:
+  vault:
+    image: hashicorp/vault:latest
+    container_name: ki-enterprise-vault
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8200:8200"
+    command: ["server"]
+    volumes:
+      - ../../storage/vault:/vault/file
+      - ../../infrastructure/vault/vault.hcl:/vault/config/vault.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - ki-enterprise
+    healthcheck:
+      test: ["CMD-SHELL", "VAULT_ADDR=http://localhost:8200 vault status > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
+  vault-init:
+    image: hashicorp/vault:latest
+    container_name: ki-enterprise-vault-init
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=***REMOVED-VAULT-TOKEN***
+    env_file:
+      - ../../infrastructure/vault/.env
+    volumes:
+      - ../../infrastructure/vault/init-vault.sh:/init-vault.sh
+    command: ["/bin/sh", "-c", "apk add --no-cache curl jq > /dev/null 2>&1 && /init-vault.sh"]
+    user: root
+    networks:
+      - ki-enterprise
+    restart: "no"
+
+networks:
+  ki-enterprise:
+    external: true
