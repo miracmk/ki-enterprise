@@ -170,19 +170,27 @@ def _known_architectural_gaps() -> list[dict]:
     """Bu oturumda GERCEKTEN 3 KEZ (CEO->Aethris->Dashboard) ayni kok nedenden
     bulunan bilinen bir mimari eksiklik - somut, kanitlanmis bir 'verimsizlik
     raporu' ornegi (build order Phase 10'un istedigi tam olarak bu):
-    tekrarlanan kalip TEK bir kok neden duzeltmesiyle cozulebilir."""
+    tekrarlanan kalip TEK bir kok neden duzeltmesiyle cozulebilir.
+
+    2026-07-13 guncellemesi: core/aethris servisi SILINDI (kisisel asistan
+    artik KI Enterprise disinda, Ki-Life-OS/OpenClaw uzerinde bagimsiz
+    calisiyor - bkz. core/organization/AGENTIC_ARCHITECTURE_PLAN.md). Asagidaki
+    "Aethris" evidence satiri artik TARIHSEL bir kanit (kok nedenin 3 kez
+    tekrarlandigini gosteriyor) - aktif bir tuketici DEGIL. CEO tarafi da
+    kismen duzeldi: core/ceo artik GET /api/v1/ceo/workflows (Temporal'dan
+    canli RUNNING sorgusu) sunuyor - Dashboard bunu HENUZ benimsemedi,
+    asil kalan is bu."""
     return [{
         "type": "inefficiency_report",
-        "title": "Onay bekleyen workflow'lar hicbir yerde guvenilir sekilde gorunmuyor (3 farkli tuketicide bulundu)",
+        "title": "Onay bekleyen workflow'lar hicbir yerde guvenilir sekilde gorunmuyor (3 farkli tuketicide bulundu, kismen duzeltildi)",
         "evidence": [
-            "CEO (core/ceo) Phase 2: _wait_and_remember SADECE workflow tamamlandiktan sonra yazar",
-            "Aethris (core/aethris) Phase 8: pending_approvals_count metrigi bu yuzden her zaman 0/yanlis",
-            "Dashboard (core/dashboard) Phase 9: pending_approval_count AYNI kok nedenle yanlis (adi expired_approval_count olarak duzeltildi, ama gercek sayim hala yok)",
+            "CEO (core/ceo) Phase 2: _wait_and_remember SADECE workflow tamamlandiktan sonra yazardi - 2026-07-13'te GET /api/v1/ceo/workflows (Temporal canli sorgu) eklenerek COZULDU",
+            "Aethris (core/aethris) Phase 8: pending_approvals_count metrigi bu yuzden her zaman 0/yanlisti - servis 2026-07-13'te SILINDI (artik KI Enterprise kapsami disinda, bkz. Ki-Life-OS), bu madde artik TARIHSEL",
+            "Dashboard (core/dashboard) Phase 9: pending_approval_count AYNI kok nedenle yanlis (adi expired_approval_count olarak duzeltildi, ama gercek sayim hala yok) - HALA COZULMEDI",
         ],
         "recommendation": (
-            "CEO'ya Temporal list_workflows (ExecutionStatus=Running) tabanli bir "
-            "GET /api/v1/ceo/pending-approvals ucu eklenirse, hem Aethris hem Dashboard "
-            "TEK bir degisiklikle duzelir - 3 ayri gecici-cozum yerine 1 kok-neden cozumu."
+            "Dashboard, core/ceo'nun zaten var olan GET /api/v1/ceo/workflows?status=RUNNING "
+            "ucunu kullanacak sekilde guncellenirse kalan tek tuketici de duzelir."
         ),
         "severity": "medium",
     }]

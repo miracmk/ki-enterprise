@@ -1,9 +1,12 @@
 """
 KI Enterprise Project Manager Layer (Phase 6).
 
-Build order'daki 6 proje: ki-business, ki-social, ki-wallet, ki-form,
-ki-management, aethris (+ "unassigned": project etiketi olmadan dispatch edilen
-isler icin - hicbir zaman gorunmez kalmasin diye, bkz. asagida).
+Build order'daki 5 proje: ki-business, ki-social, ki-wallet, ki-form,
+ki-management (+ "unassigned": project etiketi olmadan dispatch edilen
+isler icin - hicbir zaman gorunmez kalmasin diye, bkz. asagida). "aethris"
+2026-07-13'te PROJECTS'ten cikarildi - core/aethris (Phase 8) servisi
+silindi, kisisel asistan artik KI Enterprise disinda, Ki-Life-OS/OpenClaw
+uzerinde bagimsiz calisiyor (bkz. core/organization/AGENTIC_ARCHITECTURE_PLAN.md).
 
 Bu servis kendi NATS consumer'ini KURMAZ; CEO/Department Manager/Worker Pool
 zaten bir workflow'un "project" etiketiyle PROJE-BAZLI Memory kayitlari YAZAR

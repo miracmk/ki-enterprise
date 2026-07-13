@@ -36,7 +36,6 @@ ALL_SERVICES = {
     "workers": settings.WORKERS_API_URL,
     "projects": settings.PROJECTS_API_URL,
     "skills": settings.SKILLS_API_URL,
-    "aethris": settings.AETHRIS_API_URL,
 }
 
 

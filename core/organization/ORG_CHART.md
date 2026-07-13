@@ -2,18 +2,21 @@
 
 Bu dosya, şirketin AI-yönetimli organizasyon yapısını ve her role atanmış skill'leri özetler. Karakter tanımları için tek doğruluk kaynağı `core/personas/PERSONAS.md`'dir; skill tanımlarının tek doğruluk kaynağı `core/skills/skills_registry.py` (`owner_role`/`source` alanları) ve rol→skill gruplaması `core.env:EXECUTIVE_ROLE_SKILLS`'tir. Bu dosya o ikisinin **okunabilir özeti**dir — kod değil, biri değişirse burası da elle güncellenmeli.
 
+**2026-07-13 mimari değişikliği:** `core/aethris` (FastAPI, port 5008) **silindi**. Miraç'ın kişisel asistanı Aethris, KI Enterprise'ın **dışında**, Ki-Life-OS/OpenClaw üzerinde bağımsız bir sistem olarak çalışıyor — KI Enterprise'ın kendi org şemasının bir parçası DEĞİL. İki sistem (Ki-Life-OS/Aethris ve KI Enterprise/John) birbirinden bağımsız ama haberleşen iki ayrı agentic sistem olacak şekilde tasarlandı (bkz. `core/organization/AGENTIC_ARCHITECTURE_PLAN.md` §6 — Senaryo 2).
+
 ```
 Miraç (kurucu)
    │
    ▼
-Aethris (kişisel asistan — core/aethris, port 5008)
-   │  (delegate-to-ceo ile niyet iletir, kendisi karar almaz)
+Aethris — Ki-Life-OS/OpenClaw (KI Enterprise DIŞINDA, bağımsız sistem)
+   │  (iş/şirket niyeti gelirse John'a Telegram üzerinden iletir - protokol seviyesi
+   │   "supervisor" ilişkisi, süreç/state paylaşımı YOK)
    ▼
-John — CEO (core/ceo, port 5000)
-   │  Doğal dil sohbet: POST /api/v1/ceo/chat
+John — CEO (core/ceo, port 5000 + ayrı/izole OpenClaw instance'ı, kurulum sürüyor)
+   │  Doğal dil sohbet: POST /api/v1/ceo/chat (+ OpenClaw agent, kendi Telegram botu)
    │  İş dağıtımı: POST /api/v1/ceo/dispatch (Temporal workflow)
    ▼
-Executive Board (core/executives, port 5003)
+Executive Board (core/executives, port 5003 — statik review; + ayrı OpenClaw Chief agent'ları, kurulum sürüyor)
    ├── CTO  — Kai   (teknik değerlendirme)
    ├── CFO  — Vera  (maliyet kapısı — cost_flag)
    ├── CMO  — Iris  (büyüme/marka)
@@ -28,7 +31,7 @@ Workers (core/workers, port 5005)
    Deniz(dev) / Emre(research) / Ada(marketing) / Zeynep(support) ...
    ▼
 Projects (core/projects, port 5006)
-   ki-business / ki-social / ki-wallet / ki-form / ki-management / aethris
+   ki-business / ki-social / ki-wallet / ki-form / ki-management
 ```
 
 ## Rol → Skill ataması (core/skills, port 5007)

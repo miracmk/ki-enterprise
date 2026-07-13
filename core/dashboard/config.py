@@ -12,7 +12,6 @@ class DashboardSettings(BaseSettings):
     WORKERS_API_URL: str = "http://localhost:5005"
     PROJECTS_API_URL: str = "http://localhost:5006"
     SKILLS_API_URL: str = "http://localhost:5007"
-    AETHRIS_API_URL: str = "http://localhost:5008"
     INTERNAL_API_KEY: str  # zorunlu, core.env'den gelir - servisler-arasi (sunucu-sunucu)
     DASHBOARD_UI_TOKEN: str  # zorunlu - SADECE /ui sayfasina gomulur, kapsamlandirilmis
     PROJECTS: list[str]
