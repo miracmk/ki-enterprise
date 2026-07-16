@@ -6,6 +6,7 @@
 # Runtime data
 storage/
 dlq_fallback.jsonl
+scheduler_state.json
 
 # Python
 __pycache__/

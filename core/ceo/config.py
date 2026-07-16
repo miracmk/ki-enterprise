@@ -13,6 +13,7 @@ class CEOSettings(BaseSettings):
     TEMPORAL_NAMESPACE: str = "default"
     TASK_QUEUE: str = "ki-enterprise-queue"
     MEMORY_API_URL: str = "http://localhost:5001"
+    IMPROVEMENT_API_URL: str = "http://localhost:5010"
 
     REPORT_CONSUMER_DURABLE: str = "ceo-report-collector"
     # Bir dispatch'in "yayinlandi" ile "yapildi" arasindaki mutabakati icin -

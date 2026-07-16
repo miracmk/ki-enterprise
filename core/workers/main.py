@@ -559,6 +559,25 @@ async def _send_to_dlq(http: httpx.AsyncClient, subject: str, num_delivered: int
         return False
 
 
+async def _get_prompt_augment(http: httpx.AsyncClient, department: str) -> str:
+    """core/improvement'in yazdigi 'worker:prompt-augment:{department}' notunu
+    okur (Faz B3, self-improvement kapanisi - bkz. core/improvement/main.py:
+    _analyze_quality_failures). Tekrarlayan Chief QC kalite derslerinin
+    persona'ya otomatik eklenmesini saglar. Bulunamazsa/hata olursa sessizce
+    bos doner - bu saf bir iyilestirme katmani, kritik yol DEGIL."""
+    try:
+        resp = await http.get(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            params={"mem_type": "global", "scope_key": f"worker:prompt-augment:{department}", "limit": 1},
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        return items[0]["content"].get("note", "") if items else ""
+    except httpx.HTTPError:
+        return ""
+
+
 async def _check_exists(http: httpx.AsyncClient, idempotency_key: str) -> dict | None:
     """Pahali LLM cagrisindan ONCE Memory'de bu is zaten yapilmis mi kontrol
     eder. idempotency_key sadece DUPLICATE KAYDI onluyordu (LLM cagrisi
@@ -610,6 +629,14 @@ async def _process_one(nc: nats.NATS, http: httpx.AsyncClient, msg, semaphore: a
             logger.warning(f"Skip raporu yayinlanamadi: {e}")
         await msg.ack()
         return
+
+    # Faz B3 - self-improvement kapanisi: tekrarlayan kalite derslerini
+    # (core/improvement tarafindan tespit edilir) persona'ya runtime'da ekler.
+    # WORKER_PERSONAS global sozlugu MUTASYONA UGRAMAZ - sadece bu gorev icin
+    # kopya bir persona olusturulur.
+    augment_note = await _get_prompt_augment(http, department)
+    if augment_note:
+        persona = {**persona, "system_prompt": f"{persona['system_prompt']}\n\n{augment_note}"}
 
     idempotency_key = f"deliverable:{source_id}"
 

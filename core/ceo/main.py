@@ -386,6 +386,10 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class DailyReportRequest(BaseModel):
+    report_type: str = "evening"  # "morning" | "evening" - bkz. core/scheduler
+
+
 async def verify_api_key(authorization: str = Header(default="")):
     expected = f"Bearer {settings.INTERNAL_API_KEY}"
     if not secrets.compare_digest(authorization, expected):
@@ -446,6 +450,24 @@ CHAT_STYLE_GUIDANCE = (
     "'Bu is boyle yurumuyor' gibi kisa bir sikayete kisa ve dogrudan cevap "
     "ver ('Anladim, ne olmuyor tam olarak?') - bunu bir yonetim kurulu "
     "sunumuna cevirme, bu sohbeti yorar ve gercek CEO gibi hissettirmez."
+)
+
+# Faz B - proaktif gun basi/gun sonu brifingi (core/scheduler tarafindan
+# tetiklenir). CHAT_STYLE_GUIDANCE'tan farkli: burada kullanici HICBIR SEY
+# sormadi, John kendisi baslatiyor - bu yuzden "gunaydin/gun sonu" acilisi
+# ve somut sayisal veri vurgusu ayri bir tarz gerektiriyor.
+DAILY_REPORT_STYLE_GUIDANCE = (
+    "GUNLUK RAPOR TARZI (ONEMLI): Bu, Mirac'a Telegram'da gonderilecek "
+    "proaktif bir brifing - kullanici sormadi, SEN (John) baslatiyorsun. "
+    "Kisa (5-10 cumle), gundelik ama net konus. Once en onemli/riskli 2-3 "
+    "noktayi one cikar (kalite hatasi, SLA ihlali, basarisiz is varsa), "
+    "sonra kisa bir genel ozetle kapat. Somut sayisal veriyi dogrudan ver "
+    "('3 is su an acik', '1 kalite hatasi bulundu, worker'a geri gonderildi') "
+    "ama markdown tablo/basliklar KULLANMA - bu bir Telegram mesaji, resmi "
+    "rapor sablonu degil. 'morning' rapor turu icin 'Gunaydin Mirac' gibi, "
+    "'evening' icin 'Gun sonu ozeti' gibi kisa bir acilisla basla. Hicbir "
+    "sorun/acik is yoksa bunu da kisaca ve rahat bir dille soyle - 'her sey "
+    "yolunda' demekten cekinme, yapay bir sorun uydurma."
 )
 
 
@@ -528,6 +550,78 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=502, detail=f"AI Gateway'e erisilemedi/beklenmedik yanit: {e}")
 
     return {"name": settings.CEO_NAME, "message": request.message, "answer": answer}
+
+
+@app.post("/api/v1/ceo/daily-report", dependencies=[Depends(verify_api_key)])
+async def daily_report(request: DailyReportRequest):
+    """CEO'nun (John) Mirac'a proaktif gun basi/gun sonu brifingi - core/scheduler
+    tarafindan periyodik tetiklenir, donen 'report' metni Telegram'a push edilir
+    (bkz. Faz B). Bu uc kendisi hicbir yere yazmaz/mesaj gondermez - SADECE metni
+    uretip doner, gonderim scheduler'in sorumlulugundadir (tek-sorumluluk)."""
+    try:
+        escalations = await _memory_get(app.state.http, "global", "ceo:escalations", limit=20)
+    except httpx.HTTPError:
+        escalations = []
+    try:
+        outstanding = await _memory_get(app.state.http, "global", "dispatch:outstanding", limit=200)
+    except httpx.HTTPError:
+        outstanding = []
+
+    dlq_fallback_count = 0
+    if DLQ_FALLBACK_FILE.exists():
+        try:
+            with open(DLQ_FALLBACK_FILE) as f:
+                dlq_fallback_count = sum(1 for _ in f)
+        except OSError:
+            pass
+
+    proposals = []
+    try:
+        resp = await app.state.http.get(
+            f"{settings.IMPROVEMENT_API_URL}/api/v1/improvement/proposals",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"}, timeout=15.0,
+        )
+        if resp.status_code == 200:
+            proposals = resp.json().get("proposals", [])
+    except httpx.HTTPError as e:
+        logger.warning(f"Gunluk rapor: improvement onerileri alinamadi: {e}")
+
+    esc_lines = [
+        f"- [{e['content'].get('type', '?')}] {e['content'].get('workflow', '?')}: "
+        f"{e['content'].get('detail') or e['content'].get('corrective_taken') or e['content'].get('error') or '?'}"
+        for e in escalations
+    ] or ["(son escalation/sorun kaydi yok)"]
+    proposal_lines = [f"- {p.get('title', '?')}" for p in proposals] or ["(bekleyen self-improvement onerisi yok)"]
+
+    context = (
+        f"Rapor turu: {request.report_type}\n\n"
+        f"Su an acik/kapanmamis dispatch sayisi: {len(outstanding)}\n\n"
+        f"Son escalation'lar (kalite hatasi/SLA ihlali/basarisiz is, en yeni 20):\n"
+        + "\n".join(esc_lines) + "\n\n"
+        f"DLQ yerel fallback dosyasindaki kalici basarisiz mesaj sayisi (sadece CEO servisi gorunumu): {dlq_fallback_count}\n\n"
+        f"Self-improvement onerileri (core/improvement, henuz Miraç onayi bekliyor):\n"
+        + "\n".join(proposal_lines)
+    )
+
+    system_prompt = f"{CEO_PERSONA}\n\n{DAILY_REPORT_STYLE_GUIDANCE}"
+    try:
+        resp = await app.state.http.post(
+            f"{settings.AI_GATEWAY_URL}/api/chat",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context},
+            ]},
+        )
+        resp.raise_for_status()
+        report_text = resp.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        raise HTTPException(status_code=502, detail=f"AI Gateway'e erisilemedi/beklenmedik yanit: {e}")
+
+    return {
+        "report": report_text, "report_type": request.report_type,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/api/v1/ceo/dispatch", status_code=202, dependencies=[Depends(verify_api_key)])

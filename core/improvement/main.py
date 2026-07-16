@@ -9,13 +9,18 @@ YAPAMAZ, Mirac'in ONAYI OLMADAN:
   - Silme islemi yapamaz
 
 Bu yuzden core/improvement KASITLI OLARAK SADECE OKUMA yapar. Hicbir POST/PUT/
-DELETE uc YOKTUR ki bir "aksiyon" alamasin - tek yazma islemi, ANALIZ
-SONUCLARINI Memory'e KAYDETMEKTIR (bir oneri listesi, uygulama DEGIL).
+DELETE uc YOKTUR ki bir "aksiyon" alamasin - tek yazma turleri, ANALIZ
+SONUCLARINI Memory'e KAYDETMEKTIR (bir oneri listesi, uygulama DEGIL) VE (Faz
+B3, 2026-07-16 eklendi) tekrarlayan kalite derslerini worker'in system_prompt'una
+ekleyecek KISA bir runtime-notu (worker:prompt-augment:{department}) - bu da
+kod/harcama/deploy/silme DEGIL, sadece bir sonraki gorevde okunan, silinirse
+eski davranisa donen geri-alinabilir bir Memory kaydidir.
 
 Yapabildikleri (build order): eksik skill tespiti, yeni workflow/worker/proje
-onerisi, verimsizlik raporu. Bu servis analiz eder + Memory'e ONERI olarak
-yazar - Mirac/Aethris bunlari GORUR, servis KENDI BASINA HICBIR SEYI
-UYGULAMAZ.
+onerisi, verimsizlik raporu, tekrarlayan kalite deseni tespiti + otomatik prompt
+zenginlestirmesi. Bu servis analiz eder + Memory'e ONERI olarak yazar -
+Mirac/Aethris bunlari GORUR, servis KENDI BASINA HICBIR SEYI (kod/harcama/
+deploy/silme anlaminda) UYGULAMAZ.
 """
 import logging
 import secrets
@@ -65,6 +70,65 @@ async def _memory_get(http: httpx.AsyncClient, mem_type: str, scope_key: str, li
     if resp.status_code >= 400:
         return [], None  # 404 = gercekten kayit yok, hata degil
     return [i["content"] for i in resp.json().get("items", []) if isinstance(i.get("content"), dict)], None
+
+
+async def _memory_store(http: httpx.AsyncClient, mem_type: str, scope_key: str, content: dict, idempotency_key: str | None = None) -> bool:
+    """Bu servisin ANALIZ SONUCU disinda yazdigi TEK sey - worker prompt'una
+    eklenecek 'ders' notu (bkz. _analyze_quality_failures). Kod merge/harcama/
+    deploy/silme DEGIL, sadece runtime'da okunan, geri alinabilir bir Memory
+    kaydi (silinirse worker eski davranisina doner) - build-order kisitina uygun."""
+    try:
+        body = {"mem_type": mem_type, "scope_key": scope_key, "content": content}
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
+        resp = await http.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json=body,
+        )
+        resp.raise_for_status()
+        return True
+    except httpx.HTTPError as e:
+        logger.warning(f"Memory'e yazilamadi ({mem_type}/{scope_key}): {e}")
+        return False
+
+
+async def _analyze_quality_failures(http: httpx.AsyncClient) -> tuple[list[dict], list[str]]:
+    """Faz A5 Katman 2'nin (Chief QC, core/executives) yazdigi 'qc:preventive:{department}'
+    kayitlarini tarar. Bir departmanda tekrarlayan (>=2) dusuk-kalite tespiti varsa,
+    somut bir 'onleyici faaliyet' olarak worker'in system_prompt'una eklenecek kisa bir
+    'ders' notu uretilip 'worker:prompt-augment:{department}' scope'una yazilir -
+    core/workers/main.py bunu bir sonraki gorevde OTOMATIK okuyup persona'ya ekler.
+    Bu, kullanicinin istedigi 'hatalardan ders cikarip otomatik daha verimli olma'
+    hedefinin somut karsiligidir - riskli/geri-alinamaz hicbir aksiyon icermez."""
+    proposals, errors = [], []
+    departments = sorted(set(settings.WORKFLOW_TO_DEPARTMENT.values()))
+    for department in departments:
+        entries, err = await _memory_get(http, "global", f"qc:preventive:{department}", limit=10)
+        if err:
+            errors.append(err)
+            continue
+        if len(entries) < 2:
+            continue
+        gaps = sorted({str(g) for e in entries[:5] for g in (e.get("qc_gaps") or [])})
+        if not gaps:
+            continue
+        augment_note = (
+            f"[Otomatik kalite dersi - gecmiste {len(entries)} kez tekrarlayan dusuk-kalite "
+            f"tespiti] Su noktalara ozellikle dikkat et: {'; '.join(gaps[:5])}"
+        )
+        stored = await _memory_store(http, "global", f"worker:prompt-augment:{department}", {
+            "note": augment_note, "based_on_entries": len(entries),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        proposals.append({
+            "type": "quality_pattern",
+            "title": f"'{department}' departmaninda {len(entries)} tekrarlayan dusuk-kalite deseni bulundu, worker prompt'u {'otomatik zenginlestirildi' if stored else 'zenginlestirilemedi (Memory yazim hatasi)'}",
+            "evidence": gaps[:5],
+            "recommendation": "Worker'in system_prompt'una otomatik bir 'ders' notu eklendi (core/workers/main.py bir sonraki gorevde runtime'da okur) - kod degisikligi degil, geri alinabilir bir Memory kaydidir.",
+            "severity": "low",
+        })
+    return proposals, errors
 
 
 async def _analyze_dlq(http: httpx.AsyncClient) -> tuple[list[dict], list[str]]:
@@ -209,19 +273,26 @@ app = FastAPI(title="KI Enterprise Self Improvement (analiz-yalnizca, hicbir aks
 @app.get("/api/v1/improvement/analyze", dependencies=[Depends(verify_api_key)])
 async def analyze():
     """Sistemi analiz eder, onerileri Memory'e KAYDEDER (uygulamaz) ve doner.
-    Bu servisin YAPTIGI TEK 'yazma' islemi budur - bir oneri LISTESI kaydetmek,
-    onerilerin HICBIRINI kendisi UYGULAMAZ (kod merge/harcama/deploy/silme
-    icin hicbir uc/yetenek bu serviste YOKTUR)."""
+    Bu servisin yaptigi yazma islemleri: (1) bir oneri LISTESI kaydetmek, (2)
+    Faz B3 ile eklenen, tekrarlayan kalite derslerini worker'in system_prompt'una
+    ekleyecek KISA bir not (bkz. _analyze_quality_failures - runtime prompt
+    zenginlestirmesi, geri alinabilir). Onerilerin HICBIRINI (ve bu notun
+    KENDISINI) kod/harcama/deploy/silme anlaminda UYGULAMAZ - o tur bir uc/yetenek
+    bu serviste YOKTUR."""
     dlq_proposals, dlq_errors = await _analyze_dlq(app.state.http)
     coverage_proposals = _analyze_department_coverage()
     skill_proposals, skill_errors = await _analyze_skill_usage(app.state.http)
     cost_proposals, cost_errors = await _analyze_cost_patterns(app.state.http)
+    quality_proposals, quality_errors = await _analyze_quality_failures(app.state.http)
     architectural_proposals = _known_architectural_gaps()
 
-    all_proposals = dlq_proposals + coverage_proposals + skill_proposals + cost_proposals + architectural_proposals
+    all_proposals = (
+        dlq_proposals + coverage_proposals + skill_proposals + cost_proposals
+        + quality_proposals + architectural_proposals
+    )
     # "0 sorun bulundu" ile "bazi kaynaklara erisilemedigi icin olcemedim"
     # ARTIK AYIRT EDILEBILIR (Fable 5 Phase 10 denetiminde bulundu).
-    analysis_errors = dlq_errors + skill_errors + cost_errors
+    analysis_errors = dlq_errors + skill_errors + cost_errors + quality_errors
     generated_at = datetime.now(timezone.utc).isoformat()
 
     record = {
