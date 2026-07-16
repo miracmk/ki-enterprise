@@ -1,0 +1,37 @@
+services:
+  dashboard:
+    build:
+      context: /opt/ki-enterprise/core/dashboard
+    container_name: ki-enterprise-dashboard
+    ports:
+      - "5009:5009"
+    volumes:
+      - /opt/ki-enterprise/core.env:/opt/ki-enterprise/core.env:ro
+    environment:
+      CEO_API_URL: http://host.docker.internal:5000
+      MEMORY_API_URL: http://host.docker.internal:5001
+      AI_GATEWAY_URL: http://host.docker.internal:5002
+      EXECUTIVES_API_URL: http://host.docker.internal:5003
+      DEPARTMENTS_API_URL: http://host.docker.internal:5004
+      WORKERS_API_URL: http://host.docker.internal:5005
+      PROJECTS_API_URL: http://host.docker.internal:5006
+      SKILLS_API_URL: http://host.docker.internal:5007
+      TWENTY_API_URL: http://host.docker.internal:3020/graphql
+      # FINANCE_API_URL - core/finance 2026-07-16'da Miroc'in acik onayiyla
+      # 0.0.0.0'a acildi (once sadece 127.0.0.1 dinliyordu). Genel internete
+      # KAPALI kaldi - ufw SADECE bu container'in bulundugu iki docker ag
+      # araligini (192.168.144.0/20, 192.168.16.0/20) 5011 portu icin beyaz
+      # listeye aldi, baska hicbir yerden erisilemez.
+      FINANCE_API_URL: http://host.docker.internal:5011
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ki-enterprise
+      - external_network
+    restart: unless-stopped
+
+networks:
+  ki-enterprise:
+    external: true
+  external_network:
+    external: true
