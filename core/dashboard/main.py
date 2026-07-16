@@ -139,21 +139,35 @@ async def verify_api_key(authorization: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Gecersiz veya eksik Authorization header'i")
 
 
-async def verify_master_key(authorization: str = Header(default="")):
-    """DISPATCH gibi YAZMA/aksiyon-tetikleyen uclar icin - SADECE tam
-    INTERNAL_API_KEY kabul edilir, DASHBOARD_UI_TOKEN GECERSIZDIR (verify_api_key'in
-    aksine). 2026-07-16: dashboard'a gercek gorev tetikleme eklenirken bilerek
-    boyle tasarlandi - /ui sayfasina gomulu token'in "sadece salt-okunur"
-    garantisi (bkz. verify_api_key docstring'i) BOZULMASIN diye kullanici bu
-    ucu cagirirken master key'i HER SEFERINDE elle girer, sayfaya gomulmez."""
-    if not secrets.compare_digest(authorization, f"Bearer {settings.INTERNAL_API_KEY}"):
-        raise HTTPException(status_code=401, detail="Bu islem icin tam INTERNAL_API_KEY gerekir (DASHBOARD_UI_TOKEN yeterli degil)")
+# NOT (2026-07-16 karar degisikligi): Dispatch/metrik-girisi uclari eskiden
+# ayri bir verify_master_key ile SADECE tam INTERNAL_API_KEY kabul ediyordu -
+# kullanici her dispatch'te key'i elle girmek zorundaydi. Miracin acik
+# talebiyle bu surtunme kaldirildi: bu uclar artik verify_api_key ile AYNI
+# kapida (login sonrasi DASHBOARD_UI_TOKEN yeterli). Guvenlik notu: DASHBOARD_UI_TOKEN
+# sizarsa (orn. XSS) artik salt-okunur degil, dispatch/KPI-yazma da mumkun olur -
+# perimeter hala kullanici adi/parola login'i (bkz. login()), ama "sadece
+# salt-okunur" garantisi ARTIK YOK. Bu, kullanicinin bilerek tercih ettigi
+# bir kullanilabilirlik/guvenlik dengesi.
 
 
 class DispatchRequest(BaseModel):
     workflow: str
     prompt: str
     project: str = ""
+
+
+class RoomMessageRequest(BaseModel):
+    message: str
+    active_chiefs: list[str] = []
+
+
+class CustomIntegrationRequest(BaseModel):
+    id: str = ""  # verilirse mevcut kaydi gunceller, bos ise yeni kayit acilir
+    name: str
+    category: str
+    base_url: str = ""
+    api_key: str = ""
+    notes: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -542,12 +556,12 @@ async def chief_dashboard(chief: str):
     }
 
 
-@app.post("/api/v1/dashboard/metrics/{chief}/{kpi_key}", dependencies=[Depends(verify_master_key)])
+@app.post("/api/v1/dashboard/metrics/{chief}/{kpi_key}", dependencies=[Depends(verify_api_key)])
 async def record_metric(chief: str, kpi_key: str, req: MetricEntryRequest):
     """Otomatik veri kaynagi olmayan KPI'lar (ARR/MRR/CAC/eNPS gibi is verisi
     gerektirenler) icin manuel giris - Invoice Ninja/anket gibi entegrasyonlar
-    baglanana kadar gecici kalici depo. DISPATCH ile ayni yetki seviyesi
-    (verify_master_key) - salt-okunur UI token'i yazma yapamaz."""
+    baglanana kadar gecici kalici depo. Login sonrasi DASHBOARD_UI_TOKEN ile
+    cagrilabilir (bkz. verify_api_key, 2026-07-16 karar degisikligi)."""
     if chief not in CHIEFS:
         raise HTTPException(status_code=404, detail=f"Gecersiz chief: {chief}. Gecerli degerler: {CHIEFS}")
     valid_keys = {k for k, _ in CHIEF_KPI_CATALOG.get(chief, [])}
@@ -584,14 +598,170 @@ async def system_dashboard():
     }
 
 
+CUSTOM_INTEGRATIONS_SCOPE_KEY = "custom_integrations"
+CATEGORY_LABELS = {
+    "crm": "CRM", "accounting": "Muhasebe", "social_media": "Sosyal Medya", "bank": "Banka",
+    "productivity": "Verimlilik", "dev_infra": "Gelistirme / Altyapi", "other": "Diger",
+}
+
+
+def _mask_key(key: str) -> str:
+    """api_key'i UI'ya TAM doner-DEGIL, sadece son 4 karakterini gosterir -
+    Risk Register/Audit Trail'deki gibi Memory'de duz metin durur (mevcut
+    sistem genelinde tutarli, ayri bir vault YOK) ama en azindan ekranda
+    yanlislikla goruntulenmez/kopyalanmaz."""
+    if not key:
+        return ""
+    if len(key) <= 4:
+        return "*" * len(key)
+    return "*" * (len(key) - 4) + key[-4:]
+
+
+async def _get_custom_integrations() -> list[dict]:
+    """custom_integrations Memory scope'undan en guncel kayitlari doner -
+    append-only + reduce-to-latest deseni (Risk Register ile AYNI, bkz.
+    core/executives/main.py:_latest_by_id) - Memory'de UPDATE yoktur."""
+    resp, err = await _safe_get(
+        app.state.http, f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve?mem_type=global&scope_key={CUSTOM_INTEGRATIONS_SCOPE_KEY}&limit=200"
+    )
+    if resp is None:
+        return []
+    latest: dict[str, dict] = {}
+    for item in resp.get("items", []):
+        content = item.get("content")
+        if not isinstance(content, dict) or "id" not in content:
+            continue
+        rid = content["id"]
+        created_at = item.get("created_at", "")
+        if rid not in latest or created_at > latest[rid].get("_created_at", ""):
+            latest[rid] = {**content, "_created_at": created_at}
+    for v in latest.values():
+        v.pop("_created_at", None)
+    return [v for v in latest.values() if not v.get("deleted")]
+
+
 @app.get("/api/v1/dashboard/integrations", dependencies=[Depends(verify_api_key)])
 async def integrations_dashboard():
-    """Composio uzerinden baglanan tum toolkit/app'lerin (Gmail, Slack, GitHub, vb.)
-    ozet gorunumu - core/composio servisinin periyodik senkronladigi cache'i proxy'ler."""
-    data, err = await _safe_get(app.state.http, f"{settings.COMPOSIO_API_URL}/api/v1/composio/connections")
-    if err is not None:
-        return {"total": 0, "by_toolkit": {}, "accounts": [], "error": err}
-    return data
+    """Tum sirket entegrasyonlarinin kategorize edilmis, insan-okunabilir
+    gorunumu (Miracin talebi: 'CRM, Accounting, Social Media, Bank vb. alanlar
+    olmasi lazim' + 'hangi kullanici adi/email baglandigini gormek istiyorum'):
+    - Composio (canli senkron, kategorize + kimlik-cozumlenmis, bkz.
+      core/composio/main.py:_resolve_identity)
+    - core/finance (Bank - CSV tabanli banka ekstresi kaynagi)
+    - Twenty CRM (CRM - yapilandirilmissa)
+    - Miracin elle ekledigi custom kayitlar (orn. Accounting - henuz gercek
+      API'si olmayan alanlar icin URL+api_key girilince 'baglanti' sayilir)."""
+    composio_data, composio_err = await _safe_get(app.state.http, f"{settings.COMPOSIO_API_URL}/api/v1/composio/connections")
+    finance_health, _ = await _safe_get(app.state.http, f"{settings.FINANCE_API_URL}/health")
+    custom = await _get_custom_integrations()
+
+    groups: dict[str, list[dict]] = {k: [] for k in CATEGORY_LABELS}
+
+    for acc in (composio_data or {}).get("accounts", []):
+        cat = acc.get("category") or "other"
+        groups.setdefault(cat, []).append({
+            "source": "composio", "id": acc.get("id"), "name": acc.get("toolkit"),
+            "identity": acc.get("identity") or "(kimlik alinamadi)",
+            "status": acc.get("status"), "updated_at": acc.get("updated_at"),
+        })
+
+    groups["bank"].append({
+        "source": "core/finance", "id": "finance", "name": "Banka Ekstresi (CSV)",
+        "identity": "Ekstre yukleme ile beslenir", "status": "ACTIVE" if finance_health else "UNREACHABLE",
+        "updated_at": None,
+    })
+
+    if settings.TWENTY_API_KEY:
+        groups["crm"].append({
+            "source": "twenty", "id": "twenty", "name": "Twenty CRM",
+            "identity": settings.TWENTY_API_URL, "status": "ACTIVE", "updated_at": None,
+        })
+
+    for c in custom:
+        cat = c.get("category") or "other"
+        has_creds = bool(c.get("base_url") or c.get("api_key"))
+        groups.setdefault(cat, []).append({
+            "source": "custom", "id": c.get("id"), "name": c.get("name"),
+            "identity": (c.get("base_url") or "") + (f" (key: ...{_mask_key(c.get('api_key', ''))[-4:]})" if c.get("api_key") else ""),
+            "status": "ACTIVE" if has_creds else "PENDING", "notes": c.get("notes", ""),
+            "updated_at": c.get("updated_at"),
+        })
+
+    return {
+        "categories": [{"key": k, "label": v, "items": groups.get(k, [])} for k, v in CATEGORY_LABELS.items()],
+        "composio_error": composio_err,
+        "composio_synced_at": (composio_data or {}).get("synced_at"),
+    }
+
+
+@app.get("/api/v1/dashboard/integrations/custom", dependencies=[Depends(verify_api_key)])
+async def list_custom_integrations():
+    """Custom entegrasyon kayitlarini (Accounting gibi) DUZENLEME formunu
+    doldurmak icin doner - api_key MASKELENIR (bkz. _mask_key), tam deger
+    sadece backend'de/gercek kullanimda kalir."""
+    items = await _get_custom_integrations()
+    return {"items": [{**c, "api_key": _mask_key(c.get("api_key", ""))} for c in items]}
+
+
+@app.post("/api/v1/dashboard/integrations/custom", dependencies=[Depends(verify_api_key)])
+async def upsert_custom_integration(req: CustomIntegrationRequest):
+    """Custom bir entegrasyon kaydi olusturur/gunceller. req.id bosSa yeni
+    kayit, doluysa GUNCELLEME (append-only + reduce-to-latest - Risk
+    Register'daki PATCH ile AYNI desen). URL/api_key girilmesi Miracin
+    beklentisiyle (bkz. talep) dogrudan 'baglanti alindi' sayilir - ayri bir
+    OAuth/dogrulama akisi YOK, bu kasitli (henuz gercek API entegrasyonu
+    olmayan kategoriler icin takip amacli kayit)."""
+    if req.category not in CATEGORY_LABELS:
+        raise HTTPException(status_code=422, detail=f"Gecersiz kategori: {req.category}. Gecerli degerler: {sorted(CATEGORY_LABELS)}")
+    existing = {}
+    if req.id:
+        current = await _get_custom_integrations()
+        existing = next((c for c in current if c.get("id") == req.id), {})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Custom entegrasyon bulunamadi")
+    integration_id = req.id or str(uuid.uuid4())
+    # api_key bos gonderilirse (UI maskelenmis degeri geri yollamaz) ONCEKI
+    # gercek degeri KORUR - aksi halde her guncellemede anahtar silinirdi.
+    api_key = req.api_key if req.api_key and not req.api_key.startswith("*") else existing.get("api_key", "")
+    content = {
+        "id": integration_id, "name": req.name, "category": req.category,
+        "base_url": req.base_url, "api_key": api_key, "notes": req.notes,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        resp = await app.state.http.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"mem_type": "global", "scope_key": CUSTOM_INTEGRATIONS_SCOPE_KEY, "content": content},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Memory'e yazilamadi: {e}")
+    return {**content, "api_key": _mask_key(api_key)}
+
+
+@app.delete("/api/v1/dashboard/integrations/custom/{integration_id}", dependencies=[Depends(verify_api_key)])
+async def delete_custom_integration(integration_id: str):
+    """Gercek bir DELETE DEGIL - Memory append-only oldugu icin 'deleted=true'
+    isaretli YENI bir kayit eklenir (_get_custom_integrations bunlari filtreler,
+    Risk Register'daki status='closed' ile ayni felsefe)."""
+    current = await _get_custom_integrations()
+    existing = next((c for c in current if c.get("id") == integration_id), None)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Custom entegrasyon bulunamadi")
+    content = {**existing, "deleted": True, "updated_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        resp = await app.state.http.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"mem_type": "global", "scope_key": CUSTOM_INTEGRATIONS_SCOPE_KEY, "content": content},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Memory'e yazilamadi: {e}")
+    return {"status": "deleted", "id": integration_id}
 
 
 @app.get("/api/v1/dashboard/workflows", dependencies=[Depends(verify_api_key)])
@@ -600,12 +770,13 @@ async def list_dispatchable_workflows():
     return {"workflows": DISPATCHABLE_WORKFLOWS}
 
 
-@app.post("/api/v1/dashboard/dispatch", dependencies=[Depends(verify_master_key)])
+@app.post("/api/v1/dashboard/dispatch", dependencies=[Depends(verify_api_key)])
 async def dispatch_task(req: DispatchRequest):
     """Herhangi bir Chief/departmana GERCEK bir gorev dispatch eder - core/ceo'nun
     zaten var olan /api/v1/ceo/dispatch ucuna proxy yapar (2026-07-16, kullanicinin
-    "worker'lar hazir gorev alabiliyor olsun" talebiyle eklendi). SADECE tam
-    INTERNAL_API_KEY ile cagrilabilir (bkz. verify_master_key)."""
+    "worker'lar hazir gorev alabiliyor olsun" talebiyle eklendi). Login sonrasi
+    DASHBOARD_UI_TOKEN ile cagrilabilir - manuel key girisi kaldirildi (2026-07-16
+    ikinci karar degisikligi, bkz. verify_api_key)."""
     if req.workflow not in DISPATCHABLE_WORKFLOWS:
         raise HTTPException(status_code=422, detail=f"Gecersiz workflow: {req.workflow}. Gecerli degerler: {DISPATCHABLE_WORKFLOWS}")
     try:
@@ -616,6 +787,47 @@ async def dispatch_task(req: DispatchRequest):
                 "Idempotency-Key": f"dashboard-ui-{uuid.uuid4()}",
             },
             json=req.model_dump(),
+            timeout=15.0,
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"CEO servisine erisilemedi: {e}")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.get("/api/v1/dashboard/room/chiefs", dependencies=[Depends(verify_api_key)])
+async def room_chiefs():
+    """Chat Odasi'na eklenebilecek Chief listesi (CEO haric, o her zaman
+    odada) - UI'nin katilimci toggle'larini olusturmasi icin."""
+    return {"chiefs": [c for c in CHIEFS if c != "ceo"], "labels": {k: v for k, v in CHIEF_LABELS.items() if k != "ceo"}}
+
+
+@app.post("/api/v1/dashboard/room/message", dependencies=[Depends(verify_api_key)])
+async def room_message_proxy(req: RoomMessageRequest):
+    """Chat Odasi mesajini core/ceo'nun /api/v1/ceo/room/message ucuna proxy
+    yapar (Faz Chat-Odasi, 2026-07-16)."""
+    try:
+        resp = await app.state.http.post(
+            f"{settings.CEO_API_URL}/api/v1/ceo/room/message",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json=req.model_dump(),
+            timeout=90.0,
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"CEO servisine erisilemedi: {e}")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.get("/api/v1/dashboard/room/history", dependencies=[Depends(verify_api_key)])
+async def room_history_proxy(limit: int = 50):
+    try:
+        resp = await app.state.http.get(
+            f"{settings.CEO_API_URL}/api/v1/ceo/room/history",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            params={"limit": limit},
             timeout=15.0,
         )
     except httpx.HTTPError as e:

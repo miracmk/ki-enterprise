@@ -15,6 +15,7 @@ class CEOSettings(BaseSettings):
     MEMORY_API_URL: str = "http://localhost:5001"
     IMPROVEMENT_API_URL: str = "http://localhost:5010"
     GOVERNANCE_API_URL: str = "http://localhost:5014"
+    EXECUTIVES_API_URL: str = "http://localhost:5003"
 
     REPORT_CONSUMER_DURABLE: str = "ceo-report-collector"
     # Bir dispatch'in "yayinlandi" ile "yapildi" arasindaki mutabakati icin -

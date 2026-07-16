@@ -17,6 +17,7 @@ baslatilmaz.
 import asyncio
 import json
 import logging
+import re
 import secrets
 import uuid
 from contextlib import asynccontextmanager
@@ -488,10 +489,11 @@ DAILY_REPORT_STYLE_GUIDANCE = (
 )
 
 
-@app.post("/api/v1/ceo/chat", dependencies=[Depends(verify_api_key)])
-async def chat(request: ChatRequest):
-    """CEO'nun (John) kullaniciyla dogal dilde sohbet ettigi uc - Aethris'in
-    (Phase 8) /ask ucuyla ayni desen: sadece danisma, workflow TETIKLEMEZ."""
+async def _build_ceo_context() -> str:
+    """CEO'nun sohbet/oda-yonlendirme kararlarinda kullandigi canli baglam
+    blogu - ekosistem taramasi + formal proje listesi + Temporal'daki
+    calisan/bekleyen isler + son kararlar. chat() ve room_message() TARAFINDAN
+    PAYLASILIR (eskiden sadece chat() icindeydi, oda ozelligiyle DRY edildi)."""
     try:
         recent = await _memory_get(app.state.http, "global", "ceo:decisions", limit=10)
     except httpx.HTTPError:
@@ -535,9 +537,7 @@ async def chat(request: ChatRequest):
         logger.warning(f"Ecosystem dizini taranamadi: {e}")
         ecosystem_context = "(ecosystem dizini taranamadi - dosya sistemi hatasi)"
 
-    system_prompt = (
-        f"{CEO_PERSONA}\n\n"
-        f"{CHAT_STYLE_GUIDANCE}\n\n"
+    return (
         f"/opt/ki-ecosystem dizininin CANLI, GERCEK taramasi (her seferinde diskten "
         f"okunur, HER ZAMAN gunceldir - kullanici 'projelerimizi/Ki Ecosystem'i "
         f"listele/tara' derse DOGRUDAN buradan cevap ver, workflow tetiklemene GEREK "
@@ -552,6 +552,14 @@ async def chat(request: ChatRequest):
         f"ikisini karistirma):\n<<<{active_context}>>>\n\n"
         f"Son sirket kararlari (SADECE tamamlanmis/basarisiz isler):\n<<<{context}>>>"
     )
+
+
+@app.post("/api/v1/ceo/chat", dependencies=[Depends(verify_api_key)])
+async def chat(request: ChatRequest):
+    """CEO'nun (John) kullaniciyla dogal dilde sohbet ettigi uc - Aethris'in
+    (Phase 8) /ask ucuyla ayni desen: sadece danisma, workflow TETIKLEMEZ."""
+    ceo_context = await _build_ceo_context()
+    system_prompt = f"{CEO_PERSONA}\n\n{CHAT_STYLE_GUIDANCE}\n\n{ceo_context}"
     try:
         resp = await app.state.http.post(
             f"{settings.AI_GATEWAY_URL}/api/chat",
@@ -635,17 +643,29 @@ async def daily_report(request: DailyReportRequest):
     except (httpx.HTTPError, KeyError, IndexError) as e:
         raise HTTPException(status_code=502, detail=f"AI Gateway'e erisilemedi/beklenmedik yanit: {e}")
 
+    # Faz "Chat Odasi": otomatik surec bilgilendirmeleri (gun basi/gun sonu
+    # raporu) SADECE Telegram'a degil, Chat Odasi gecmisine de yazilir -
+    # boylece dashboard'daki oda da bunu organik olarak gorur (Faz B'nin
+    # scheduler push'una EK, onun yerine gecmez).
+    try:
+        await _room_store_message("ceo", settings.CEO_NAME, report_text, {"type": "daily_report", "report_type": request.report_type})
+    except httpx.HTTPError as e:
+        logger.warning(f"Gunluk rapor oda gecmisine yazilamadi (Telegram gonderimi etkilenmedi): {e}")
+
     return {
         "report": report_text, "report_type": request.report_type,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-@app.post("/api/v1/ceo/dispatch", status_code=202, dependencies=[Depends(verify_api_key)])
-async def dispatch_project(request: DispatchRequest, idempotency_key: str = Header(default=None, alias="Idempotency-Key")):
-    if request.workflow not in VALID_WORKFLOWS:
-        raise HTTPException(status_code=422, detail=f"Gecersiz workflow: {request.workflow}. Gecerli degerler: {VALID_WORKFLOWS}")
-    if request.project:
+async def _do_dispatch(workflow: str, prompt: str, project: str, initiated_by: str, idempotency_key: str | None = None) -> dict:
+    """Dispatch'in TUM cekirdek mantigi - REST ucu (dispatch_project) VE Chat
+    Odasi (room_message, CEO bir gorev tespit ettiginde) TARAFINDAN PAYLASILIR.
+    Gecersiz workflow/proje icin HTTPException firlatir (cagiran taraf 422'e
+    cevirir/yakalar)."""
+    if workflow not in VALID_WORKFLOWS:
+        raise HTTPException(status_code=422, detail=f"Gecersiz workflow: {workflow}. Gecerli degerler: {VALID_WORKFLOWS}")
+    if project:
         # PROJECTS (core.env, formal butce/roadmap takibi) VE ecosystem
         # taramasindan (yeni acilan bir proje klasoru, core.env'e HIC
         # DOKUNMADAN) gelen adlarin BIRLESIMI kabul edilir - Miracin "yeni
@@ -653,16 +673,16 @@ async def dispatch_project(request: DispatchRequest, idempotency_key: str = Head
         # kok neden: 'ki-chat' gibi GERCEK, aktif bir ecosystem projesi
         # SADECE core.env'de olmadigi icin 422 ile reddediliyordu).
         known_projects = PROJECTS + sorted(_ecosystem_project_names() - set(PROJECTS))
-        if request.project not in known_projects:
-            raise HTTPException(status_code=422, detail=f"Gecersiz proje: {request.project}. Gecerli degerler: {known_projects}")
+        if project not in known_projects:
+            raise HTTPException(status_code=422, detail=f"Gecersiz proje: {project}. Gecerli degerler: {known_projects}")
 
     key = idempotency_key or str(uuid.uuid4())
-    workflow_id = f"{request.workflow}-{key}"
+    workflow_id = f"{workflow}-{key}"
 
     try:
         handle = await app.state.temporal.start_workflow(
-            request.workflow,
-            args=[request.prompt, request.project, request.initiated_by],
+            workflow,
+            args=[prompt, project, initiated_by],
             id=workflow_id,
             task_queue=settings.TASK_QUEUE,
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
@@ -681,24 +701,220 @@ async def dispatch_project(request: DispatchRequest, idempotency_key: str = Head
     # icinde persist_decision activity'si tarafindan yazilir (bkz. activities.py).
     now = datetime.now(timezone.utc)
     await _remember(app.state.http, "global", "dispatch:outstanding", {
-        "workflow_id": workflow_id, "workflow": request.workflow, "project": request.project,
-        "prompt": request.prompt, "initiated_by": request.initiated_by,
+        "workflow_id": workflow_id, "workflow": workflow, "project": project,
+        "prompt": prompt, "initiated_by": initiated_by,
         "dispatched_at": now.isoformat(),
         "expected_by": (now + timedelta(seconds=settings.DISPATCH_SLA_SECONDS)).isoformat(),
     }, idempotency_key=f"outstanding:{workflow_id}")
 
-    task = asyncio.create_task(_wait_and_remember(handle, request.workflow, request.prompt, request.project, request.initiated_by, app.state.http))
+    task = asyncio.create_task(_wait_and_remember(handle, workflow, prompt, project, initiated_by, app.state.http))
     app.state.background_tasks.add(task)
     task.add_done_callback(app.state.background_tasks.discard)
 
     audit_task = asyncio.create_task(_audit(
         app.state.http, actor="ceo", action="dispatch", target=workflow_id, decision=status,
-        detail=f"workflow={request.workflow} project={request.project or 'unassigned'} initiated_by={request.initiated_by}",
+        detail=f"workflow={workflow} project={project or 'unassigned'} initiated_by={initiated_by}",
     ))
     app.state.background_tasks.add(audit_task)
     audit_task.add_done_callback(app.state.background_tasks.discard)
 
     return {"status": status, "workflow_id": workflow_id}
+
+
+@app.post("/api/v1/ceo/dispatch", status_code=202, dependencies=[Depends(verify_api_key)])
+async def dispatch_project(request: DispatchRequest, idempotency_key: str = Header(default=None, alias="Idempotency-Key")):
+    return await _do_dispatch(request.workflow, request.prompt, request.project, request.initiated_by, idempotency_key)
+
+
+# ============================================================
+# Chat Odasi - CEO + (istege bagli) Chief'lerin ortak sohbet ekrani.
+# Miracin talebi: "sanal toplanti odalari" gibi - CEO varsayilan katilimci,
+# Chief'ler eklenebilir/cikarilabilir, gecmis kalicidir, chat uzerinden
+# gorev verme/rapor isteme/otomatik surec bilgilendirmesi TAMAMI mumkun.
+# ============================================================
+ROOM_CHIEFS = ["cto", "cfo", "cmo", "coo", "ciso", "cpo", "cro", "cdo"]
+ROOM_CHIEF_NAMES = {
+    "cto": "Kai (CTO)", "cfo": "Vera (CFO)", "cmo": "Iris (CMO)", "coo": "Leo (COO)",
+    "ciso": "Nora (CISO)", "cpo": "Selin (CPO)", "cro": "Doruk (CRO)", "cdo": "Aylin (CDO)",
+}
+ROOM_HISTORY_SCOPE_KEY = "ceo:room:history"
+
+ROOM_ROUTER_INSTRUCTIONS = (
+    "SOHBET ODASI MODU: Bu bir Telegram/DM degil, Mirac'in dashboard'undaki "
+    "canli bir toplanti odasi. Odada su an sen (John/CEO) VE (varsa) su "
+    "Chief'ler var: {active_chiefs_desc}. Sen odanin koordinatorusun, "
+    "varsayilan/birincil konusmacisin. Mirac'in mesajini degerlendirip "
+    "SADECE asagidaki JSON semasina uyan bir cikti uret, baska hicbir metin "
+    "ekleme (aciklama/markdown yok):\n\n"
+    '{{"ceo_reply": "Mirac\'a Turkce, kisa/gundelik cevabin - HER ZAMAN doldur", '
+    '"delegate_to": ["chief_kodu", ...], '
+    '"dispatch": {{"workflow": "gecerli_workflow_adi", "project": "", "prompt": "worker\'a gidecek net, kendi basina anlasilir gorev tanimi"}} veya null}}\n\n'
+    "delegate_to KURALI: Mirac odadaki bir Chief'e ACIKCA hitap ederse (isim/"
+    "unvanla, orn. 'Vera ne dusunuyor', 'CFO'ya sor', '@CTO') VEYA konu "
+    "acikca o Chief'in uzmanlik alanini ilgilendiriyorsa o kodu ekle - SADECE "
+    "su an odada olanlardan secebilirsin: {active_chiefs_list}. Odada olmayan "
+    "bir Chief'i ASLA ekleme (once Mirac'in odaya eklemesi gerekir). Genel/"
+    "sana yonelik bir mesajsa bos liste ([]) birak.\n\n"
+    "dispatch KURALI: Mirac somut, uygulanabilir bir GOREV/IS/URETIM istiyorsa "
+    "(orn. 'şu raporu hazirla', 'şu ozelligi gelistir', 'pazar analizi yap') "
+    "dispatch alanini doldur - workflow su listeden BIRI olmali: {valid_workflows}. "
+    "Sadece soru/sohbet/rapor-istegi (yeni bir is baslatmayi GEREKTIRMEYEN, "
+    "mevcut baglamdan cevaplanabilecek) ise dispatch=null birak. project alani "
+    "SADECE Mirac yukaridaki baglamda listelenen GERCEK bir proje adini acikca "
+    "belirtirse doldurulur - konudan/gorev basligindan proje adi UYDURMA, "
+    "belirsizse HER ZAMAN bos string (\"\") birak."
+)
+
+
+async def _room_store_message(role: str, speaker: str, text: str, extra: dict | None = None):
+    """Oda gecmisine tek bir mesaj ekler (append-only - idempotency_key
+    KASITLI verilmez, chat mesajlarinda tekrar zararsizdir)."""
+    content = {"role": role, "speaker": speaker, "text": text, "at": datetime.now(timezone.utc).isoformat()}
+    if extra:
+        content.update(extra)
+    await _remember(app.state.http, "global", ROOM_HISTORY_SCOPE_KEY, content)
+
+
+async def _room_recent_text(limit: int = 12) -> str:
+    """Router promptuna eklenecek kisa gecmis ozeti (kronolojik sirayla)."""
+    try:
+        items = await _memory_get(app.state.http, "global", ROOM_HISTORY_SCOPE_KEY, limit=limit)
+    except httpx.HTTPError:
+        return "(gecmis okunamadi)"
+    lines = []
+    for item in reversed(items):  # _memory_get created_at DESC doner, kronolojik icin ters cevrilir
+        c = item.get("content", {})
+        lines.append(f"{c.get('speaker', c.get('role', '?'))}: {str(c.get('text', ''))[:300]}")
+    return "\n".join(lines) if lines else "(henuz mesaj yok)"
+
+
+async def _room_route(message: str, active_chiefs: list[str]) -> dict:
+    """CEO'nun oda-yonlendirme kararini verir - JSON semali yapisal LLM
+    cagrisi (telegram-bridge:classify_message ile ayni desen)."""
+    valid_active = [c for c in active_chiefs if c in ROOM_CHIEFS]
+    active_desc = ", ".join(ROOM_CHIEF_NAMES[c] for c in valid_active) if valid_active else "(su an sadece sen, John/CEO)"
+    ceo_context, history_text = await asyncio.gather(_build_ceo_context(), _room_recent_text())
+    system_prompt = (
+        f"{CEO_PERSONA}\n\n"
+        + ROOM_ROUTER_INSTRUCTIONS.format(
+            active_chiefs_desc=active_desc,
+            active_chiefs_list=(", ".join(valid_active) or "(hicbiri)"),
+            valid_workflows=", ".join(VALID_WORKFLOWS),
+        )
+        + f"\n\n{ceo_context}\n\nOdadaki son mesajlar:\n<<<{history_text}>>>"
+    )
+    default = {"ceo_reply": "Su an cevap veremiyorum, birazdan tekrar dener misin?", "delegate_to": [], "dispatch": None}
+    try:
+        resp = await app.state.http.post(
+            f"{settings.AI_GATEWAY_URL}/api/chat",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"priority": "high", "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ]},
+            timeout=90.0,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        logger.warning(f"Oda yonlendirme LLM cagrisi basarisiz: {e}")
+        return default
+
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not match:
+        return {**default, "ceo_reply": content[:2000] or default["ceo_reply"]}
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {**default, "ceo_reply": content[:2000] or default["ceo_reply"]}
+    if not isinstance(parsed, dict):
+        return default
+
+    delegate_to = [c for c in (parsed.get("delegate_to") or []) if c in valid_active]
+    dispatch = parsed.get("dispatch")
+    if not isinstance(dispatch, dict) or not dispatch.get("workflow"):
+        dispatch = None
+    return {
+        "ceo_reply": parsed.get("ceo_reply") or default["ceo_reply"],
+        "delegate_to": delegate_to,
+        "dispatch": dispatch,
+    }
+
+
+class RoomMessageRequest(BaseModel):
+    message: str
+    active_chiefs: list[str] = []  # odaya eklenmis Chief kodlari (ceo haric, orn. ["cfo","ciso"])
+
+
+@app.post("/api/v1/ceo/room/message", dependencies=[Depends(verify_api_key)])
+async def room_message(request: RoomMessageRequest):
+    """Chat Odasi'na bir mesaj gonderir. CEO koordine eder: her zaman kendi
+    cevabini verir, odadaki Chief'lerden ilgili olanlari (varsa) delegate
+    eder, somut bir gorev tespit ederse GERCEK bir dispatch baslatir."""
+    if not request.message.strip():
+        raise HTTPException(status_code=422, detail="Mesaj bos olamaz")
+
+    await _room_store_message("user", "Mirac", request.message)
+
+    decision = await _room_route(request.message, request.active_chiefs)
+
+    dispatched = None
+    if decision["dispatch"]:
+        d = decision["dispatch"]
+        # Savunma amacli sanitizasyon: LLM konudan/gorev basligindan uydurma bir
+        # proje adi uretebilir (canli testte gorulen gercek hata) - prompt bunu
+        # yasaklasa da, bilinmeyen bir proje adi geldiginde dispatch'i BASARISIZ
+        # KILMAK yerine sessizce "unassigned" havuzuna (bos proje) dusuruyoruz.
+        proj = d.get("project") or ""
+        if proj and proj not in (PROJECTS + sorted(_ecosystem_project_names() - set(PROJECTS))):
+            logger.info(f"Oda dispatch'i bilinmeyen proje adi uretti ('{proj}'), bos projeye dusuruluyor.")
+            proj = ""
+        try:
+            dispatched = await _do_dispatch(
+                workflow=d.get("workflow", ""), prompt=d.get("prompt") or request.message,
+                project=proj, initiated_by="room",
+            )
+        except HTTPException as e:
+            dispatched = {"status": "failed", "error": e.detail}
+
+    ceo_reply = decision["ceo_reply"]
+    if dispatched and dispatched.get("status") in ("dispatched", "already_dispatched"):
+        ceo_reply += f"\n\n(Is baslatildi: {dispatched.get('workflow_id')})"
+    await _room_store_message("ceo", settings.CEO_NAME, ceo_reply, {"dispatch": dispatched})
+
+    delegate_replies = []
+    for chief in decision["delegate_to"]:
+        try:
+            resp = await app.state.http.post(
+                f"{settings.EXECUTIVES_API_URL}/api/v1/executives/chat/{chief}",
+                headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+                json={"message": request.message, "context": f"CEO'nun cevabi: {ceo_reply}"},
+                timeout=90.0,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            delegate_replies.append(body)
+            await _room_store_message("chief", body.get("name", chief), body.get("answer", ""))
+        except httpx.HTTPError as e:
+            logger.warning(f"Chief chat basarisiz ({chief}): {e}")
+
+    return {
+        "ceo_reply": ceo_reply, "delegate_replies": delegate_replies,
+        "dispatched": dispatched,
+    }
+
+
+@app.get("/api/v1/ceo/room/history", dependencies=[Depends(verify_api_key)])
+async def room_history(limit: int = 50):
+    try:
+        items = await _memory_get(app.state.http, "global", ROOM_HISTORY_SCOPE_KEY, limit=limit)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Memory'e erisilemedi: {e}")
+    messages = [
+        {**item["content"], "id": item["id"]}
+        for item in reversed(items) if isinstance(item.get("content"), dict)
+    ]
+    return {"messages": messages, "count": len(messages)}
 
 
 @app.post("/api/v1/ceo/dispatch/{workflow_id}/approve", dependencies=[Depends(verify_api_key)])
