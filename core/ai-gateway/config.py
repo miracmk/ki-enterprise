@@ -16,5 +16,18 @@ class GatewaySettings(BaseSettings):
     DEFAULT_EMBEDDING_MODEL: str = "mistral-embed"
     DEFAULT_AGENT_MODEL: str = "ki-cloud"
 
+    # Faz C - kota-farkinda ekonomi ("Free as possible"). Redis, core/memory
+    # ile AYNI instance/port - ayri bir DB index (bkz. main.py) kullanilarak
+    # anahtar cakismasi onlenir.
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 16379
+    REDIS_DB: int = 1
+    # Gunluk toplam token kotasi (tum modeller toplami) - asilirsa sadece
+    # priority="high" istekler gecer. Groq ucretsiz katmanin kaba tahmini
+    # gunluk kapasitesine gore VARSAYILAN, gercek deger core.env'den ezilebilir.
+    DAILY_TOKEN_BUDGET: int = 1_000_000
+    QUOTA_SOFT_THRESHOLD_RATIO: float = 0.8
+    CHEAP_FALLBACK_MODEL: str = "ki-cloud-worker"
+
 
 settings = GatewaySettings()

@@ -256,27 +256,30 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
 
   # ============================================================
-  # Cerebras (2026-07-15 eklendi - "free as possible" arastirmasi)
+  # Cerebras (2026-07-15 eklendi, 2026-07-16 dogrulanip zincire baglandi -
+  # "free as possible" arastirmasi/Faz C)
   # Ucretsiz katman: 1M token/gun, 30 rpm, kredi karti gerekmez (dogrulama
-  # kaynagi: inference-docs.cerebras.ai, 2026-07 itibariyle). HENUZ hicbir
-  # fallback zincirine EKLENMEDI - bu repo'nun kurali (bkz. asagida
-  # litellm_settings notu): yeni model, gercek curl testiyle dogrulanmadan
-  # ve CEREBRAS_API_KEY core.env/docker/litellm/.env'e girilmeden zincire
-  # sokulmaz. Su an sadece TANIMLI, tek-basina cagrilabilir.
+  # kaynagi: inference-docs.cerebras.ai, 2026-07 itibariyle).
+  # 2026-07-16 GERCEK curl testiyle dogrulandi: CEREBRAS_API_KEY saglandi,
+  # /v1/models sorgulandi - bu hesapta llama-3.3-70b/qwen-3-32b YOK (eski
+  # tanim yanlisti, hic dogrulanmadan yazilmisti), gercekte erisilebilir
+  # olanlar gemma-4-31b / zai-glm-4.7 / gpt-oss-120b - UCU de gercek chat
+  # completion cagrisiyla dogrulandi (200 OK). Sadece gpt-oss-120b (en genel
+  # amacli/tutarli) fallback zincirine eklendi (bkz. asagida &fallback_chain).
   # ============================================================
-  - model_name: cerebras-llama-3.3-70b
-    litellm_params:
-      model: cerebras/llama-3.3-70b
-      api_key: os.environ/CEREBRAS_API_KEY
-      rpm: 30
-  - model_name: cerebras-qwen3-32b
-    litellm_params:
-      model: cerebras/qwen-3-32b
-      api_key: os.environ/CEREBRAS_API_KEY
-      rpm: 30
   - model_name: cerebras-gpt-oss-120b
     litellm_params:
       model: cerebras/gpt-oss-120b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+  - model_name: cerebras-gemma-4-31b
+    litellm_params:
+      model: cerebras/gemma-4-31b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+  - model_name: cerebras-zai-glm-4-7b
+    litellm_params:
+      model: cerebras/zai-glm-4.7
       api_key: os.environ/CEREBRAS_API_KEY
       rpm: 30
 
@@ -285,9 +288,9 @@ model_list:
   # 9-Chief org genisletmesiyle (bkz. ORG_CHART.md, AGENTIC_ARCHITECTURE_PLAN.md
   # SS12) eklenen iki yeni tier. "Free as possible": Manager/Worker katmani
   # CEO/Chief'ten cok daha yuksek hacimde/sayida cagri yapacagi icin BIRINCIL
-  # model, dogrulanan en cömert ucretsiz katman olan Groq kaliyor (Cerebras
-  # birincil YAPILMADI - CEREBRAS_API_KEY henuz saglanmadi/dogrulanmadi,
-  # saglanip curl ile test edilince buraya birincil olarak tasinabilir).
+  # model, dogrulanan en cömert ucretsiz katman olan Groq kaliyor. Cerebras
+  # (2026-07-16 dogrulandi) birincil YAPILMADI - Groq'un rpm/kalite dengesi
+  # daha oturmus, Cerebras suan SADECE fallback zincirinde ek kapasite.
   # Fallback zinciri mevcut &fallback_chain ile AYNI (ki-cloud'la paylasilir).
   # ============================================================
   - model_name: ki-cloud-manager
@@ -401,6 +404,7 @@ litellm_settings:
         - groq-llama-3.1-70b               # Groq, 70B, ucretsiz - dogrulandi OK
         - openrouter-google-gemma-4-31b-it  # OpenRouter, Gemma 31B, ucretsiz - dogrulandi OK
         - groq-llama-3.1-8b                 # Groq, 8B, ucretsiz, hizli son çare - dogrulandi OK
+        - cerebras-gpt-oss-120b             # Cerebras, 120B, ucretsiz (1M token/gun) - 2026-07-16 dogrulandi OK
         - ollama-llama3.1                   # Ollama Cloud, abonelik-bazli, son guvence - dogrulandi OK
     # John'un birincili artik groq-llama-3.1-70b'yle ayni model oldugu icin
     # (bkz. yukarida ki-cloud-ceo tanimi) o girdi zincirden cikarildi, geri
@@ -408,6 +412,7 @@ litellm_settings:
     - ki-cloud-ceo:
         - openrouter-google-gemma-4-31b-it
         - groq-llama-3.1-8b
+        - cerebras-gpt-oss-120b
         - ollama-llama3.1
     - ki-cloud-chief: *fallback_chain
     - ki-cloud-manager: *fallback_chain

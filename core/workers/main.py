@@ -487,6 +487,7 @@ async def _do_work(http: httpx.AsyncClient, persona: dict, prompt: str, plan: st
                 {"role": "user", "content": f"Orijinal talep: {prompt}\n\nOnaylanan plan:\n{plan[:3000]}"},
             ],
             "temperature": 0.4,
+            "priority": "normal",
         },
         timeout=150.0,
     )
@@ -515,6 +516,7 @@ async def _score_deliverable(http: httpx.AsyncClient, prompt: str, deliverable: 
                     {"role": "user", "content": f"Gorev: {prompt[:1000]}\n\nCikti:\n{deliverable[:2000]}"},
                 ],
                 "temperature": 0.0,
+                "priority": "low",
             },
             timeout=60.0,
         )

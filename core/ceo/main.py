@@ -539,7 +539,7 @@ async def chat(request: ChatRequest):
         resp = await app.state.http.post(
             f"{settings.AI_GATEWAY_URL}/api/chat",
             headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
-            json={"messages": [
+            json={"priority": "high", "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.message},
             ]},
@@ -608,7 +608,7 @@ async def daily_report(request: DailyReportRequest):
         resp = await app.state.http.post(
             f"{settings.AI_GATEWAY_URL}/api/chat",
             headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
-            json={"messages": [
+            json={"priority": "low", "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context},
             ]},

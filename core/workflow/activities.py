@@ -52,7 +52,7 @@ async def plan_with_ai(workflow_name: str, prompt: str) -> dict:
         resp = await client.post(
             f"{settings.AI_GATEWAY_URL}/api/reason",
             headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
-            json={"prompt": f"{system_context}\n\nTalep: {prompt}"},
+            json={"prompt": f"{system_context}\n\nTalep: {prompt}", "priority": "high"},
             timeout=90.0,
         )
         resp.raise_for_status()

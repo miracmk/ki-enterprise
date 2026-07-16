@@ -196,6 +196,7 @@ async def _qc_score(chief_role: str, workflow_name: str, deliverable_summary: st
             json={
                 "model": settings.REVIEW_MODEL,
                 "temperature": 0.2,
+                "priority": "normal",
                 "messages": [
                     {"role": "system", "content": QC_SYSTEM_PROMPT_TEMPLATE.format(chief=chief_name)},
                     {"role": "user", "content": f"Is turu: {workflow_name}\n\nCikti ozeti:\n{deliverable_summary[:1500]}"},
@@ -377,6 +378,7 @@ async def review(req: ReviewRequest):
             json={
                 "model": settings.REVIEW_MODEL,
                 "temperature": 0.2,
+                "priority": "high",
                 "messages": [
                     {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
                     {"role": "user", "content": f"Talep: {req.prompt}\n\nPlan:\n{truncated_plan}"},

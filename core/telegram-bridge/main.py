@@ -230,7 +230,7 @@ def classify_message(client: httpx.Client, text: str, is_group: bool, addressed:
         resp = client.post(
             f"{AI_GATEWAY_URL}/api/chat",
             headers={**ceo_headers(), "Content-Type": "application/json"},
-            json={"messages": [
+            json={"priority": "high", "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ]},
