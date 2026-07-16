@@ -14,7 +14,7 @@ from datetime import datetime
 from urllib.request import urlopen
 
 CONFIG_FILE = "/opt/ki-enterprise/infrastructure/litellm/config.yaml"
-OPENROUTER_API_KEY = "***REMOVED-OPENROUTER-KEY***"
+OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 LOG_FILE = "/opt/ki-enterprise/storage/logs/litellm-model-update.log"
 
 logging.basicConfig(
@@ -68,7 +68,7 @@ def generate_openrouter_section(models: list) -> str:
         lines.append(f"  - model_name: {model_name}")
         lines.append("    litellm_params:")
         lines.append(f"      model: openrouter/{model_id}")
-        lines.append(f"      api_key: {OPENROUTER_API_KEY}")
+        lines.append("      api_key: os.environ/OPENROUTER_API_KEY")
     return "\n".join(lines)
 
 

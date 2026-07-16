@@ -6,7 +6,7 @@
 set -euo pipefail
 
 CONFIG_FILE="/opt/ki-enterprise/infrastructure/litellm/config.yaml"
-OPENROUTER_API_KEY="***REMOVED-OPENROUTER-KEY***"
+: "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY ortam degiskeni ayarlanmali}"
 LOG_FILE="/opt/ki-enterprise/storage/logs/litellm-model-update.log"
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -37,7 +37,7 @@ while IFS= read -r model_id; do
   - model_name: $model_name
     litellm_params:
       model: openrouter/$model_id
-      api_key: $OPENROUTER_API_KEY"
+      api_key: os.environ/OPENROUTER_API_KEY"
 done <<< "$FREE_MODELS"
 
 # Config dosyasını güncelle (OpenRouter bölümünü değiştir)
