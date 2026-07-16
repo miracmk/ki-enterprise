@@ -6,6 +6,7 @@ class ExecutiveSettings(BaseSettings):
 
     AI_GATEWAY_URL: str = "http://localhost:5002"
     MEMORY_API_URL: str = "http://localhost:5001"
+    GOVERNANCE_API_URL: str = "http://localhost:5014"
     INTERNAL_API_KEY: str  # zorunlu, core.env'den gelir
     # "ki-cloud": ucretsiz+guclu bulut modeli + otomatik fallback zinciri
     # (bkz. infrastructure/litellm/config.yaml). Yerel Ollama kullanilmaz.

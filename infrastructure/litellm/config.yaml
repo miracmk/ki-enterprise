@@ -419,7 +419,10 @@ litellm_settings:
     - ki-cloud-worker: *fallback_chain
 
 general_settings:
-  master_key: ***REMOVED-LITELLM-MASTER-KEY***
+  # Faz D5 (2026-07-16): gomulu degerden os.environ/ referansina tasindi -
+  # gercek deger docker/litellm/.env'de (gitignore'lu, git gecmisinden de
+  # temizlendi). Diger tum api_key'lerle AYNI desen (bkz. yukaridaki model_list).
+  master_key: os.environ/LITELLM_MASTER_KEY
   database_url: postgresql://ki:StrongPassword123!@ki-enterprise-postgres:5432/litellm
   otel: false
   max_request_size_mb: 150

@@ -431,6 +431,48 @@ async def chief_dashboard(chief: str):
             "unit": "count", "note": "CTO departmanlari backlog+teslimat toplami (proxy)",
         }
 
+        # Faz D4 - lead_time_for_changes: Faz A3'un dispatch:outstanding/closed
+        # mutabakat kayitlarindan (workflow_id bazinda eslestirilerek) GERCEKTEN
+        # olculur - onceden dashboard'da SADECE manuel-giris KPI kataloguydu.
+        outstanding_data, outstanding_err = await _safe_get(
+            app.state.http, f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve?mem_type=global&scope_key=dispatch:outstanding&limit=200"
+        )
+        closed_data, closed_err = await _safe_get(
+            app.state.http, f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve?mem_type=global&scope_key=dispatch:closed&limit=200"
+        )
+        if outstanding_err:
+            extra_errors.append(outstanding_err)
+        if closed_err:
+            extra_errors.append(closed_err)
+        outstanding_items = [i["content"] for i in (outstanding_data or {}).get("items", []) if isinstance(i.get("content"), dict)]
+        closed_items = [i["content"] for i in (closed_data or {}).get("items", []) if isinstance(i.get("content"), dict)]
+        dispatched_by_id = {
+            o["workflow_id"]: o for o in outstanding_items
+            if o.get("workflow_id") and o.get("workflow") in chief_workflows
+        }
+        closed_by_id = {c["workflow_id"]: c for c in closed_items if c.get("workflow_id")}
+        lead_times = []
+        for wf_id, o in dispatched_by_id.items():
+            c = closed_by_id.get(wf_id)
+            if not c:
+                continue
+            try:
+                d0 = datetime.fromisoformat(o["dispatched_at"])
+                d1 = datetime.fromisoformat(c["closed_at"])
+                lead_times.append((d1 - d0).total_seconds())
+            except (KeyError, ValueError):
+                continue
+        if lead_times:
+            avg_seconds = sum(lead_times) / len(lead_times)
+            auto_kpis["lead_time_for_changes"] = {
+                "value": round(avg_seconds / 60, 1), "unit": "minutes",
+                "note": f"{len(lead_times)} is icin dispatch->kapanis suresi ortalamasi (dispatch:outstanding/closed, Faz A3/D4)",
+            }
+        # NOT: mttr (Mean Time To Recovery) bilerek eklenmedi - sistemde bir
+        # "arizanin cozuldugu an"i isaretleyen gercek bir veri noktasi henuz
+        # yok (escalation'lar acilir ama kapanisi izlenmiyor). Sahte sayi
+        # uydurmaktansa manual_kpis'te birakildi (bu dosyanin kendi ilkesi).
+
     elif chief == "cfo":
         fin_data, fin_err = await _safe_get(app.state.http, f"{settings.FINANCE_API_URL}/api/v1/finance/transactions?limit=500")
         txns = (fin_data or {}).get("transactions", [])

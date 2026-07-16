@@ -234,6 +234,23 @@ async def _remember(http: httpx.AsyncClient, mem_type: str, scope_key: str, cont
         return False
 
 
+async def _audit(http: httpx.AsyncClient, actor: str, action: str, target: str, decision: str, detail: str = ""):
+    """Faz D2 - kritik bir karari core/governance'in append-only audit trail'ine
+    yazar (ISO 27001/COBIT izlenebilirlik kontrolu). Fire-and-forget: governance
+    servisine erisilemezse ana akisi (dispatch/approve) HICBIR SEKILDE bloklamaz
+    veya basarisiz kilmaz, sadece loglar."""
+    try:
+        resp = await http.post(
+            f"{settings.GOVERNANCE_API_URL}/api/v1/audit",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"actor": actor, "action": action, "target": target, "decision": decision, "detail": detail},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.warning(f"Audit kaydi yazilamadi (ana akis etkilenmedi): {e}")
+
+
 def _status_to_query_value(status_name: str) -> str:
     """WorkflowExecutionStatus enum adi (RUNNING, CONTINUED_AS_NEW) Temporal'in
     visibility query'sinde bekledigi PascalCase degere (Running, ContinuedAsNew)
@@ -674,6 +691,13 @@ async def dispatch_project(request: DispatchRequest, idempotency_key: str = Head
     app.state.background_tasks.add(task)
     task.add_done_callback(app.state.background_tasks.discard)
 
+    audit_task = asyncio.create_task(_audit(
+        app.state.http, actor="ceo", action="dispatch", target=workflow_id, decision=status,
+        detail=f"workflow={request.workflow} project={request.project or 'unassigned'} initiated_by={request.initiated_by}",
+    ))
+    app.state.background_tasks.add(audit_task)
+    audit_task.add_done_callback(app.state.background_tasks.discard)
+
     return {"status": status, "workflow_id": workflow_id}
 
 
@@ -688,6 +712,7 @@ async def approve_cost(workflow_id: str):
         await handle.signal("approve_cost")
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Workflow bulunamadi/sinyal gonderilemedi: {e}")
+    await _audit(app.state.http, actor="ceo", action="approve_cost", target=workflow_id, decision="approved")
     return {"status": "approved", "workflow_id": workflow_id}
 
 

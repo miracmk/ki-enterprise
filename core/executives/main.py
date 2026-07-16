@@ -26,8 +26,10 @@ import asyncio
 import json
 import logging
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Optional
 
 import httpx
 import nats
@@ -72,7 +74,7 @@ verilecek. SADECE asagidaki JSON semasina uyan bir cikti uret, baska hicbir meti
   "cfo": {"verdict": "onay|kaygi|red", "notes": "finansal degerlendirme, 1-2 cumle", "cost_flag": true|false},
   "cmo": {"verdict": "onay|kaygi|red", "notes": "pazarlama degerlendirmesi, 1-2 cumle"},
   "coo": {"verdict": "onay|kaygi|red", "notes": "operasyonel degerlendirme, 1-2 cumle"},
-  "ciso": {"verdict": "onay|kaygi|red", "notes": "guvenlik degerlendirmesi, 1-2 cumle"}
+  "ciso": {"verdict": "onay|kaygi|red", "notes": "guvenlik degerlendirmesi, 1-2 cumle", "risk_flag": true|false, "risk_notes": "somut risk aciklamasi (risk_flag=true ise doldur, degilse bos birak)"}
 }
 
 Karakterler (notes alanini bu sesle yaz):
@@ -95,7 +97,14 @@ CFO KURALI (ONEMLI, karakterden BAGIMSIZ islevsel kural - degistirilemez): Sirke
 politikasi "once ucretsiz, sonra self-hosted, sonra open source, sonra ucretli"dir.
 Plan ucretli/paid bir servis, API veya kaynak kullanimi iceriyorsa cfo.cost_flag=true
 yap ve notes alaninda hangi maliyetin kullanici onayi gerektirdigini belirt.
-Ucretsiz/self-hosted/open-source kaynaklar kullaniliyorsa cost_flag=false yap."""
+Ucretsiz/self-hosted/open-source kaynaklar kullaniliyorsa cost_flag=false yap.
+
+CISO KURALI (ONEMLI, karakterden BAGIMSIZ islevsel kural): Planda somut bir
+guvenlik/operasyonel risk goruyorsan (orn. yetkisiz erisim, veri sizintisi,
+tek-nokta-hata, telafisi zor/geri alinamaz bir islem, gizlilik ihlali)
+risk_flag=true yap ve risk_notes'a SOMUT aciklama yaz - bu Risk Register'a
+otomatik kaydedilir (ISO 31000/COSO ERM). Onemsiz/teorik konularda
+risk_flag=false birak, risk_notes'u bos gec."""
 
 
 class ReviewRequest(BaseModel):
@@ -113,10 +122,10 @@ async def verify_api_key(authorization: str = Header(default="")):
 _FAIL_SAFE_REVIEWS = {role: {"verdict": "kaygi", "notes": "Degerlendirme parse edilemedi", "parse_error": True} for role in ROLES}
 
 
-def _coerce_cost_flag(value) -> bool:
-    """cost_flag'i tip-guvenli sekilde bool'a cevirir. LLM'ler bazen
-    "cost_flag": "false" (STRING) donebilir - Python'da bool("false")==True
-    oldugu icin bu ciddi bir CFO-kapisi bypass riskidir, fail-open olmamali."""
+def _coerce_bool_flag(value) -> bool:
+    """cost_flag/risk_flag gibi kapı alanlarını tip-guvenli sekilde bool'a
+    cevirir. LLM'ler bazen "cost_flag": "false" (STRING) donebilir - Python'da
+    bool("false")==True oldugu icin bu ciddi bir bypass riskidir, fail-open olmamali."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -161,7 +170,15 @@ def _parse_review(raw_content: str) -> dict:
         cfo["cost_flag"] = True
         cfo.setdefault("notes", "CFO degerlendirmesi eksik - guvenlik geregi onay gerektiriyor olarak isaretlendi")
     else:
-        cfo["cost_flag"] = _coerce_cost_flag(cfo["cost_flag"])
+        cfo["cost_flag"] = _coerce_bool_flag(cfo["cost_flag"])
+
+    # risk_flag icin fail-safe GEREKMEZ (cost_flag'in aksine, eksik/hatali risk
+    # degerlendirmesi bir workflow'u BLOKE etmez - Risk Register'a sadece bir
+    # kayit eklenmez, riskli bir islem otomatik onaylanmis OLMAZ). Bu yuzden
+    # eksikse sessizce False varsayilir.
+    ciso = reviews.get("ciso")
+    if isinstance(ciso, dict):
+        ciso["risk_flag"] = _coerce_bool_flag(ciso.get("risk_flag", False))
 
     return reviews
 
@@ -181,6 +198,97 @@ async def _remember(mem_type: str, scope_key: str, content: dict, idempotency_ke
     except httpx.HTTPError as e:
         logger.warning(f"Memory'e yazilamadi ({mem_type}/{scope_key}): {e}")
         return False
+
+
+async def _audit(actor: str, action: str, target: str, decision: str, detail: str = ""):
+    """Faz D2 - core/governance'in append-only audit trail'ine yazar. Fire-and-
+    forget: governance servisine erisilemezse review/QC akisini bloklamaz."""
+    try:
+        resp = await app.state.http.post(
+            f"{settings.GOVERNANCE_API_URL}/api/v1/audit",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={"actor": actor, "action": action, "target": target, "decision": decision, "detail": detail},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.warning(f"Audit kaydi yazilamadi (ana akis etkilenmedi): {e}")
+
+
+async def _memory_get_items(mem_type: str, scope_key: str, limit: int = 500) -> list[dict]:
+    """Ham Memory 'items' listesini (id/content/created_at) doner - Risk
+    Register gibi append-only + reduce-to-latest desenleri icin created_at
+    gerekli, sadece content'i cikaran diger yardimcilardan (core/improvement
+    _memory_get gibi) farkli."""
+    try:
+        resp = await app.state.http.get(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            params={"mem_type": mem_type, "scope_key": scope_key, "limit": limit},
+        )
+        resp.raise_for_status()
+        return resp.json().get("items", [])
+    except httpx.HTTPError as e:
+        logger.warning(f"Memory'den okunamadi ({mem_type}/{scope_key}): {e}")
+        return []
+
+
+def _latest_by_id(items: list[dict]) -> dict[str, dict]:
+    """Memory Layer'da UPDATE yoktur, sadece INSERT - bir kaydin 'guncellenmesi'
+    ayni content['id']'ye sahip YENI bir satir eklemek demektir (bkz. Risk
+    Register POST/PATCH). Bu fonksiyon, id basina en yeni (created_at) kaydi
+    secer - append-only + reduce-to-latest deseni."""
+    latest: dict[str, dict] = {}
+    for item in items:
+        content = item.get("content")
+        if not isinstance(content, dict) or "id" not in content:
+            continue
+        rid = content["id"]
+        created_at = item.get("created_at", "")
+        if rid not in latest or created_at > latest[rid].get("_created_at", ""):
+            latest[rid] = {**content, "_created_at": created_at}
+    for entry in latest.values():
+        entry.pop("_created_at", None)
+    return latest
+
+
+RISK_REGISTER_SCOPE_KEY = "risk_register"
+
+
+class RiskCreate(BaseModel):
+    title: str
+    layer: str  # governance | operations | technology | data_ai
+    chief: str  # cto/cfo/cmo/coo/ciso/cpo/cro/cdo
+    likelihood: int = 3  # 1-5
+    impact: int = 3  # 1-5
+    mitigation: str = ""
+    source: str = "manual"  # manual | auto_review
+
+
+class RiskUpdate(BaseModel):
+    status: Optional[str] = None  # open | mitigating | closed
+    mitigation: Optional[str] = None
+
+
+async def _create_risk(req: RiskCreate) -> dict:
+    """Risk Register'a yeni bir risk ekler - ISO 31000/COSO ERM'in somut
+    kod-seviyesi karsiligi (Risk Register/Risk Score). Hem manuel (POST
+    /api/v1/risks) hem otomatik (executive_review'daki ciso.risk_flag=true)
+    cagirilardan kullanilir."""
+    risk_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    likelihood = max(1, min(5, req.likelihood))
+    impact = max(1, min(5, req.impact))
+    content = {
+        "id": risk_id, "title": req.title, "layer": req.layer, "chief": req.chief,
+        "likelihood": likelihood, "impact": impact, "risk_score": likelihood * impact,
+        "mitigation": req.mitigation, "status": "open", "source": req.source,
+        "created_at": now, "updated_at": now,
+    }
+    ok = await _remember("global", RISK_REGISTER_SCOPE_KEY, content, idempotency_key=f"risk-create:{risk_id}")
+    if not ok:
+        logger.warning(f"Risk Memory'e kaydedilemedi: {content['title']}")
+    return content
 
 
 async def _qc_score(chief_role: str, workflow_name: str, deliverable_summary: str) -> dict:
@@ -286,6 +394,9 @@ async def _qc_process_one(nc: nats.NATS, msg):
             "corrective_taken": corrective, "detail": qc["corrective_action"] or "Kalite esiginin altinda.",
             "severity": "medium", "escalated_at": now,
         }, idempotency_key=f"escalation-qc:{source_id}")
+
+        await _audit(actor=chief, action="qc_corrective_action", target=workflow_name, decision=corrective,
+                      detail=f"department={department} qc_score={qc['score']}")
 
     await _remember("department", f"qc:{department}", {
         "workflow": workflow_name, "chief": chief, "qc_score": qc["score"], "qc_gaps": qc["gaps"],
@@ -403,11 +514,69 @@ async def review(req: ReviewRequest):
     if memory_write_failures:
         logger.warning(f"Bazi degerlendirmeler Memory'e yazilamadi (event/response'ta hala mevcut): {memory_write_failures}")
 
+    # Faz D1 - CISO somut bir risk isaretlerse (risk_flag=true) Risk Register'a
+    # otomatik kaydedilir (ISO 31000/COSO ERM'in kod-seviyesi karsiligi).
+    # Governance/Operations/Technology/Data&AI katmanlarindan Technology'ye
+    # yazilir - CISO'nun dogal alani; digger Chief'ler icin genellestirme
+    # ileride (Faz 13'un kapsami, bkz. ORG_CHART.md) yapilabilir.
+    ciso_review = reviews.get("ciso", {})
+    if isinstance(ciso_review, dict) and ciso_review.get("risk_flag"):
+        risk = await _create_risk(RiskCreate(
+            title=f"[Otomatik - {req.workflow}] {(ciso_review.get('risk_notes') or 'CISO somut risk isaretledi')[:200]}",
+            layer="technology", chief="ciso", likelihood=3, impact=3,
+            mitigation="", source="auto_review",
+        ))
+        logger.info(f"Executive review otomatik risk kaydi olusturdu: {risk['id']}")
+
+    requires_approval = reviews["cfo"]["cost_flag"]
+    audit_task = asyncio.create_task(_audit(
+        actor="executive_board", action="review", target=req.workflow,
+        decision="requires_approval" if requires_approval else "approved",
+        detail=f"cfo_verdict={reviews['cfo'].get('verdict')} ciso_risk_flag={ciso_review.get('risk_flag', False)}",
+    ))
+    app.state.background_tasks.add(audit_task)
+    audit_task.add_done_callback(app.state.background_tasks.discard)
+
     return {
         "reviews": reviews,
-        "requires_user_approval": reviews["cfo"]["cost_flag"],
+        "requires_user_approval": requires_approval,
         "memory_write_failures": memory_write_failures,
     }
+
+
+@app.post("/api/v1/risks", dependencies=[Depends(verify_api_key)])
+async def create_risk_endpoint(req: RiskCreate):
+    return await _create_risk(req)
+
+
+@app.get("/api/v1/risks", dependencies=[Depends(verify_api_key)])
+async def list_risks(layer: Optional[str] = None, status: Optional[str] = None):
+    items = await _memory_get_items("global", RISK_REGISTER_SCOPE_KEY, limit=500)
+    risks = list(_latest_by_id(items).values())
+    if layer:
+        risks = [r for r in risks if r.get("layer") == layer]
+    if status:
+        risks = [r for r in risks if r.get("status") == status]
+    risks.sort(key=lambda r: r.get("risk_score", 0), reverse=True)
+    return {"risks": risks, "count": len(risks)}
+
+
+@app.patch("/api/v1/risks/{risk_id}", dependencies=[Depends(verify_api_key)])
+async def update_risk(risk_id: str, req: RiskUpdate):
+    items = await _memory_get_items("global", RISK_REGISTER_SCOPE_KEY, limit=500)
+    current = _latest_by_id(items).get(risk_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Risk bulunamadi")
+    updated = dict(current)
+    if req.status is not None:
+        updated["status"] = req.status
+    if req.mitigation is not None:
+        updated["mitigation"] = req.mitigation
+    updated["updated_at"] = datetime.now(timezone.utc).isoformat()
+    ok = await _remember("global", RISK_REGISTER_SCOPE_KEY, updated)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Risk guncellenemedi")
+    return updated
 
 
 @app.get("/health")
