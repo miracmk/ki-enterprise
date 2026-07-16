@@ -23,6 +23,7 @@ class DashboardSettings(BaseSettings):
     WORKFLOW_TO_DEPARTMENT: dict[str, str]
     TWENTY_API_URL: str = "http://localhost:3020/graphql"
     TWENTY_API_KEY: str = ""
+    COMPOSIO_API_URL: str = "http://localhost:5012"
 
 
 settings = DashboardSettings()

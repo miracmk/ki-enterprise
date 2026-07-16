@@ -51,10 +51,7 @@ OWNER_CHAT_ID = 5895622522        # Mirac'in kisisel Telegram DM'i
 GROUP_CHAT_ID = -1004399310343    # "Mirac Ki AI Cell"
 ALLOWED_CHATS = {OWNER_CHAT_ID, GROUP_CHAT_ID}
 
-VALID_WORKFLOWS = [
-    "new_project", "feature_request", "marketing_campaign",
-    "customer_support", "research_request", "deployment",
-]
+VALID_WORKFLOWS = list(json.loads(core_env["WORKFLOW_TO_DEPARTMENT"]).keys())
 
 TG_API = f"https://api.telegram.org/bot{JOHN_BOT_TOKEN}"
 

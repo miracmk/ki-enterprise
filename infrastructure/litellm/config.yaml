@@ -136,6 +136,26 @@ model_list:
       rpm: 25
 
   # ============================================================
+  # KI Enterprise - CEO + Board Aliases
+  # ============================================================
+  - model_name: ki-cloud-ceo
+    litellm_params:
+      # 2026-07-13: gpt-oss-120b (reasoning modeli) tool-cagiran/coklu-adim
+      # gorevlerde bos yanit veriyordu (Faz 4 2-paralel spawn testinde
+      # gozlemlendi) - John icin dogrudan/instruct model llama-3.3-70b'ye
+      # cevrildi (ki-cloud/ki-cloud-chief'e DOKUNULMADI, sadece John).
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      # CEO (John) model routing
+      rpm: 25
+  - model_name: ki-cloud-chief
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+      # Board of Chiefs model routing
+      rpm: 25
+
+  # ============================================================
   # OpenRouter (Free Models Only)
   # ============================================================
   - model_name: openrouter-cognitivecomputations-dolphin-mistral-24b-venice-edition
@@ -236,6 +256,52 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
 
   # ============================================================
+  # Cerebras (2026-07-15 eklendi - "free as possible" arastirmasi)
+  # Ucretsiz katman: 1M token/gun, 30 rpm, kredi karti gerekmez (dogrulama
+  # kaynagi: inference-docs.cerebras.ai, 2026-07 itibariyle). HENUZ hicbir
+  # fallback zincirine EKLENMEDI - bu repo'nun kurali (bkz. asagida
+  # litellm_settings notu): yeni model, gercek curl testiyle dogrulanmadan
+  # ve CEREBRAS_API_KEY core.env/docker/litellm/.env'e girilmeden zincire
+  # sokulmaz. Su an sadece TANIMLI, tek-basina cagrilabilir.
+  # ============================================================
+  - model_name: cerebras-llama-3.3-70b
+    litellm_params:
+      model: cerebras/llama-3.3-70b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+  - model_name: cerebras-qwen3-32b
+    litellm_params:
+      model: cerebras/qwen-3-32b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+  - model_name: cerebras-gpt-oss-120b
+    litellm_params:
+      model: cerebras/gpt-oss-120b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+
+  # ============================================================
+  # KI Enterprise - Department Manager + Worker Aliases (2026-07-15)
+  # 9-Chief org genisletmesiyle (bkz. ORG_CHART.md, AGENTIC_ARCHITECTURE_PLAN.md
+  # SS12) eklenen iki yeni tier. "Free as possible": Manager/Worker katmani
+  # CEO/Chief'ten cok daha yuksek hacimde/sayida cagri yapacagi icin BIRINCIL
+  # model, dogrulanan en cömert ucretsiz katman olan Groq kaliyor (Cerebras
+  # birincil YAPILMADI - CEREBRAS_API_KEY henuz saglanmadi/dogrulanmadi,
+  # saglanip curl ile test edilince buraya birincil olarak tasinabilir).
+  # Fallback zinciri mevcut &fallback_chain ile AYNI (ki-cloud'la paylasilir).
+  # ============================================================
+  - model_name: ki-cloud-manager
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 25
+  - model_name: ki-cloud-worker
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 25
+
+  # ============================================================
   # HuggingFace
   # ============================================================
   - model_name: huggingface-qwen2.5-7b
@@ -252,29 +318,12 @@ model_list:
   # ============================================================
   - model_name: ollama-llama3.1
     litellm_params:
-      model: ollama/gpt-oss:20b
+      # 2026-07-13: 20b -> 120b'ye cevrildi (kucuk model yerine cloud katalogdaki
+      # daha guclu/guvenilir varyant, Miroc'in talebiyle). gpt-oss:20b katalogda
+      # GERCEKTEN vardi (model adi sorunu degildi), ama kucuk/daha az guvenilir.
+      model: ollama/gpt-oss:120b
       api_key: os.environ/OLLAMA_CLOUD_API_KEY
       api_base: https://ollama.com
-
-  # ============================================================
-  # Ollama (Local, self-hosted - ucretsiz)
-  # ============================================================
-  - model_name: local-llama3.1
-    litellm_params:
-      model: ollama/llama3.1:latest
-      api_base: http://host.docker.internal:11434
-  - model_name: local-llama3.2-3b
-    litellm_params:
-      model: ollama/llama3.2:3b
-      api_base: http://host.docker.internal:11434
-  - model_name: local-nomic-embed
-    litellm_params:
-      model: ollama/nomic-embed-text
-      api_base: http://host.docker.internal:11434
-  - model_name: local-llama3.2-1b
-    litellm_params:
-      model: ollama/llama3.2:1b
-      api_base: http://host.docker.internal:11434
 
   # ============================================================
   # Eden AI (Free Models Only)
@@ -310,6 +359,17 @@ model_list:
       model: cloudflare/@cf/mistralai/mistral-small-3.1-24b-instruct
       api_key: os.environ/CLOUDFLARE_API_TOKEN
       api_base: https://api.cloudflare.com/client/v4/accounts/fb77da0b6710a7f7ade4a4c3714d449c/ai/run
+  # 2026-07-15 eklendi - gorsel/isitsel yetenek gereken worker'lar (CMO gorsel
+  # icerik, CPO UX/UI mockup) icin "free as possible" image-generation.
+  # HENUZ gercek curl ile dogrulanmadi (litellm'in Cloudflare image-gen
+  # entegrasyonu belirsiz, allowed_routes'a /v1/images/generations eklendi
+  # ama model adi/response semasi ilk canli testte netlesecek) - Faz 12'nin
+  # kendi kurali geregi fallback'e sokulmadi, sadece tanimli.
+  - model_name: cf-image-gen
+    litellm_params:
+      model: cloudflare/@cf/stabilityai/stable-diffusion-xl-base-1.0
+      api_key: os.environ/CLOUDFLARE_API_TOKEN
+      api_base: https://api.cloudflare.com/client/v4/accounts/fb77da0b6710a7f7ade4a4c3714d449c/ai/run
 
 litellm_settings:
   drop_params: true
@@ -326,8 +386,32 @@ litellm_settings:
   # tutulur ki bir modelin takilmasi butun zinciri gereksiz yere uzatmasin.
   num_retries: 1
   request_timeout: 90
+  # Guclu -> zayif, ucretsiz-once sirali fallback zinciri (bkz. Miraç talimati
+  # 2026-07-13). SADECE gercek curl testiyle CALISTIGI doğrulanmis modeller
+  # zincirde tutuluyor (2026-07-13 test): Gemini key'i quota=0 (kullanilamaz),
+  # openrouter-qwen-qwen3-next-80b-a3b-instruct ve
+  # openrouter-meta-llama-llama-3-3-70b-instruct upstream'de rate-limitli
+  # cikti (429) - bir fallback zincirindeki HERHANGI bir modelin hata turu
+  # "retry edilemez" sayilirsa LiteLLM zincirin geri kalanini denemeden
+  # tamamen basarisiz olabiliyor, bu yuzden dogrulanmamis/kirik modeller
+  # zincirde TUTULMUYOR. Ayni zincir ki-cloud/-ceo/-chief arasinda
+  # paylasilir - farklilasma birincil modelde (litellm_params.model).
   fallbacks:
-    - ki-cloud: ["groq-llama-3.1-70b", "ollama-llama3.1", "groq-llama-3.1-8b"]
+    - ki-cloud: &fallback_chain
+        - groq-llama-3.1-70b               # Groq, 70B, ucretsiz - dogrulandi OK
+        - openrouter-google-gemma-4-31b-it  # OpenRouter, Gemma 31B, ucretsiz - dogrulandi OK
+        - groq-llama-3.1-8b                 # Groq, 8B, ucretsiz, hizli son çare - dogrulandi OK
+        - ollama-llama3.1                   # Ollama Cloud, abonelik-bazli, son guvence - dogrulandi OK
+    # John'un birincili artik groq-llama-3.1-70b'yle ayni model oldugu icin
+    # (bkz. yukarida ki-cloud-ceo tanimi) o girdi zincirden cikarildi, geri
+    # kalani ayni.
+    - ki-cloud-ceo:
+        - openrouter-google-gemma-4-31b-it
+        - groq-llama-3.1-8b
+        - ollama-llama3.1
+    - ki-cloud-chief: *fallback_chain
+    - ki-cloud-manager: *fallback_chain
+    - ki-cloud-worker: *fallback_chain
 
 general_settings:
   master_key: ***REMOVED-LITELLM-MASTER-KEY***
@@ -340,6 +424,7 @@ general_settings:
     - /v1/completions
     - /v1/embeddings
     - /v1/models
+    - /v1/images/generations
     - /model/info
     - /key/generate
     - /key/info
@@ -347,10 +432,10 @@ general_settings:
   alerting: []
   proxy_budget_rescheduler_min_time: 0
   proxy_budget_rescheduler_max_time: 0
-  disable_spend_logs: true
-  disable_add_log_to_database: true
-  disable_load_cache_before_adding_spend_logs: true
-  disable_prometheus: true
+  disable_spend_logs: false
+  disable_add_log_to_database: false
+  disable_load_cache_before_adding_spend_logs: false
+  disable_prometheus: false
   disable_adding_master_key_hash_to_db: true
   disable_adding_worker_key_hash_to_db: true
   disable_adding_master_key_sk_to_db: true

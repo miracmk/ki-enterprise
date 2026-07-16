@@ -13,7 +13,7 @@ class GatewaySettings(BaseSettings):
     # KULLANILMAZ (host RAM'i kisitli, kesinti yaratirdi).
     DEFAULT_CHAT_MODEL: str = "ki-cloud"
     DEFAULT_REASON_MODEL: str = "ki-cloud"
-    DEFAULT_EMBEDDING_MODEL: str = "local-nomic-embed"
+    DEFAULT_EMBEDDING_MODEL: str = "mistral-embed"
     DEFAULT_AGENT_MODEL: str = "ki-cloud"
 
 

@@ -23,6 +23,7 @@ services:
       # araligini (192.168.144.0/20, 192.168.16.0/20) 5011 portu icin beyaz
       # listeye aldi, baska hicbir yerden erisilemez.
       FINANCE_API_URL: http://host.docker.internal:5011
+      COMPOSIO_API_URL: http://host.docker.internal:5012
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

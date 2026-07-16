@@ -17,8 +17,8 @@ class MemorySettings(BaseSettings):
     LITELLM_API_BASE: str = "http://localhost:4000/v1"
     LITELLM_API_KEY: str  # zorunlu, core.env'den gelir
     INTERNAL_API_KEY: str  # zorunlu, core.env'den gelir
-    EMBEDDING_MODEL: str = "local-nomic-embed"
-    EMBEDDING_DIM: int = 768
+    EMBEDDING_MODEL: str = "mistral-embed"
+    EMBEDDING_DIM: int = 1024
     SHORT_MEMORY_TTL_SECONDS: int = 3600
 
     def model_post_init(self, __context) -> None:

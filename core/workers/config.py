@@ -12,6 +12,9 @@ class WorkerSettings(BaseSettings):
     # Tek dogruluk kaynagi core.env'de - core/departments, core/projects,
     # core/ceo ile paylasilir.
     WORKFLOW_TO_DEPARTMENT: dict[str, str]
+    # Yurutme-sonrasi oz-kontrol esigi (Faz A5, Katman 1) - bu puanin altindaki
+    # ciktilar bir kez otomatik revize edilir.
+    QUALITY_MIN_SCORE: int = 60
 
 
 settings = WorkerSettings()

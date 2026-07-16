@@ -5,6 +5,7 @@
 
 # Runtime data
 storage/
+dlq_fallback.jsonl
 
 # Python
 __pycache__/

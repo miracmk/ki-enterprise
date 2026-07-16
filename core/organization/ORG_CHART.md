@@ -12,11 +12,11 @@ Aethris — Ki-Life-OS/OpenClaw (KI Enterprise DIŞINDA, bağımsız sistem)
    │  (iş/şirket niyeti gelirse John'a Telegram üzerinden iletir - protokol seviyesi
    │   "supervisor" ilişkisi, süreç/state paylaşımı YOK)
    ▼
-John — CEO (core/ceo, port 5000 + ayrı/izole OpenClaw instance'ı, kurulum sürüyor)
-   │  Doğal dil sohbet: POST /api/v1/ceo/chat (+ OpenClaw agent, kendi Telegram botu)
-   │  İş dağıtımı: POST /api/v1/ceo/dispatch (Temporal workflow)
+John — CEO (core/ceo, port 5000 + ayrı/izole OpenClaw instance'ı `/root/.openclaw-ki-enterprise/`, canlı — bkz. AGENTIC_ARCHITECTURE_PLAN.md §11)
+   │  Doğal dil sohbet: POST /api/v1/ceo/chat (+ OpenClaw agent, model litellm/ki-cloud-ceo; Telegram bağlama henüz yapılmadı — Faz 6)
+   │  İş dağıtımı: POST /api/v1/ceo/dispatch (Temporal workflow, ceo-mcp üzerinden)
    ▼
-Executive Board (core/executives, port 5003 — statik review; + ayrı OpenClaw Chief agent'ları, kurulum sürüyor)
+Executive Board (core/executives, port 5003 — statik review; + aynı izole OpenClaw instance'ında 5 canlı Chief agent'ı, model litellm/ki-cloud-chief — bkz. §11.5)
    ├── CTO  — Kai   (teknik değerlendirme)
    ├── CFO  — Vera  (maliyet kapısı — cost_flag)
    ├── CMO  — Iris  (büyüme/marka)
@@ -68,6 +68,10 @@ Skill'ler `core/skills/skills_registry.py`'de tanımlı, `POST /api/v1/skills/{n
 | | stride-threat-model | gstack (garrytan/gstack: /cso) |
 | | high-risk-action-guardrail-check | gstack (garrytan/gstack: /careful, /freeze, /guard) |
 | **Worker — development** *(Board dışı, owner_role="development")* | adversarial-test-case-design | gstack (garrytan/gstack: /qa) |
+
+## Skill → Sub-agent eşleştirmesi (OpenClaw üzerinden canlı, 2026-07-13)
+
+Yukarıdaki tablodaki skill'ler artık soyut bir REST kaydından ibaret değil — her Chief'in kendi OpenClaw agent'ında (izole instance `/root/.openclaw-ki-enterprise/`) gerçek, çağrılabilir birer **MCP tool**'u olarak sunuluyor. Mekanizma: `core/skills-mcp/server.py` (tek script, `OWNER_ROLE` env'ine göre `skills_registry.py`'yi filtreler) her rol için ayrı bir MCP sunucusu olarak kayıtlı (`skills-mcp-cto`/`-cfo`/`-cmo`/`-coo`/`-ciso`), ve her Chief'in `tools.allow`'u SADECE kendi rolünün sunucusuna kilitli (§1'deki "sub-agent" tablosuyla birebir örtüşür — yeni skill YOK, sadece var olanlar artık OpenClaw'da canlı çağrılabilir). Kod değişikliği yapılmadı; bu bölüm sadece §1/Faz 3'ün "skill = sub-agent" eşlemesinin artık çalışan bir sistemde karşılığı olduğunu belgeler. Detay/doğrulama kaydı: `AGENTIC_ARCHITECTURE_PLAN.md` §11 (Faz 2).
 
 ## Dış kaynaklardan uyarlanan 8 yeni skill — ne değişti, ne değişmedi
 
@@ -156,6 +160,70 @@ Dört repo incelendi — bu turun odağı CEO (John), Executive Board'un geri ka
 `core/ceo/main.py`: `POST /api/v1/ceo/chat` — kullanıcı (Miraç) ile serbest, doğal dilde konuşur (karakter: kararlı, doğrudan, az laf çok iş — bkz. `PERSONAS.md`). Bu uç **sadece danışma**dır, otomatik olarak bir workflow tetiklemez; gerçek iş dağıtımı hâlâ `POST /api/v1/ceo/dispatch` ile yapısal olarak yapılır. `core/telegram-bridge` artık kendi persona kopyasını tutmaz, bu uca proxy yapar — tek merkezi kaynak.
 
 **Yürüyen/bekleyen iş raporlama (2026-07-12 düzeltmesi):** Phase 2/8/9'da ÜÇ KEZ bulunan aynı kök neden ("pending_approval_count" hep yanlış/null dönüyordu çünkü Memory'deki `ceo:decisions` SADECE tamamlanmış işleri içeriyor, RUNNING işler hiç kayıt üretmiyordu) burada gerçekten çözüldü: `GET /api/v1/ceo/workflows?status=RUNNING` artık Memory'e değil doğrudan Temporal'ın visibility store'una sorar, `/api/v1/ceo/chat` bu canlı listeyi "son kararlar" (sadece tamamlanmış işler) bağlamından AYRI olarak sistem promptuna ekler. Canlı testte doğrulandı: dispatch edilen bir iş saniyeler içinde John'a "şu anda çalışan tek iş: research_request..." şeklinde doğru raporlatıldı. Not: `_status_to_query_value` fonksiyonu enum adını (`RUNNING`) Temporal'ın beklediği `PascalCase` değere (`Running`) çevirir — ikisini karıştırmak "invalid ExecutionStatus value" hatası verir, canlı testte bulundu ve düzeltildi. Aethris/Dashboard'daki aynı kök nedenli `pending_approval_count`/`expired_approval_count` alanları henüz bu uca taşınmadı (istenirse aynı endpoint'i onlar da kullanabilir).
+
+## Hedef organizasyon — 9-Chief genişleme (2026-07-15, ONAYLANDI/PLANLANDI — henüz uygulanmadı)
+
+**Durum (2026-07-15 GÜNCELLENDİ — ikinci tur):** CPO/CRO/CDO `ki-cloud-chief` modeliyle CANLI 3 yeni Chief agent'ı olarak çalışıyor (9 Chief TAM CANLI, bkz. §12.1). **Department/Worker katmanı ARTIK KURULDU VE GERÇEK UÇTAN UCA ÇALIŞIYOR** (bkz. `AGENTIC_ARCHITECTURE_PLAN.md` §14): `core/workflow`'un 6 statik Temporal workflow'u tek bir **dinamik workflow**'a (`@workflow.defn(dynamic=True)`) dönüştürüldü, artık 38 departmanın (9 eski + 30 yeni text-worker) HER BİRİ kendi adıyla doğrudan CEO'dan dispatch edilebiliyor — canlı testte "data_science" departmanına (hiç var olmayan bir isim) gerçek dispatch yapıldı, Temporal workflow tamamlandı, Worker Pool bunu işleyip GERÇEK bir teslimat üretti. Ayrıca 1 pilot görsel-analiz sub-agent'ı (`cmo-visual-analyst`) kuruldu. **2026-07-16 güncelleme (bkz. §15):** `browser` aracının OpenClaw'daki kök nedeni (ki-enterprise instance'ında `plugins.allow`/`browser` config blokları hiç yoktu) bulunup düzeltildi — doğrudan CLI'dan (`openclaw browser open`) doğrulandı. Görsel ÜRETİM için `core/image-mcp` (Cloudflare Workers AI'i LiteLLM'i bypass ederek doğrudan çağıran yeni bir MCP sunucusu) yazıldı, protokol seviyesinde doğrulandı, `cmo-visual-analyst`'e bağlandı. Gemini/OpenAI'ın "browser-use" ürünleri (Project Mariner kapandı, OpenAI computer-use ücretli) araştırılıp bilinçli olarak KULLANILMADI. **Açık kalan:** Bir OpenClaw agent'ının bu araçları LLM üzerinden uçtan uca çağırdığı henüz canlı doğrulanamadı (OpenClaw'un CLI `--local` modunda ayrı bir güvenilirlik sorunu var, §15.3).
+
+### Neden 5 değil 9 Chief
+
+Miraç'ın talebiyle mevcut 5 Chief'e (CTO/CFO/CMO/COO/CISO) üç yeni C-level eklendi — **CPO** (ürün, mevcut CTO'nun taşıdığı "feature-planning" yükünü üründen ayırır), **CRO** (satış/gelir, mevcut hiçbir Chief'te yoktu), **CDO** (veri, mevcut hiçbir Chief'te yoktu). CEO (John) hiyerarşi dışı kalır, 9 Chief'e eşit uzaklıkta.
+
+### Tam organizasyon ağacı
+
+```
+CEO — John (core/ceo, model: ki-cloud-ceo)
+│
+├── COO — Operations / Customer Success / Support / Procurement / Administration
+├── CTO — Engineering / Platform / AI Engineering / Architecture / QA
+├── CFO — Finance / Accounting / Treasury / Tax / FP&A
+├── CPO — Product / UX-UI / Product Operations / Product Analytics
+├── CMO — Brand / Growth / Content / Digital Marketing / PR
+├── CRO — Sales / Partnerships / RevOps / Customer Expansion
+├── CISO — SOC / Security Engineering / Governance / Privacy
+└── CDO — Data Engineering / Data Science / BI / AI Data / Data Governance
+```
+
+Her Chief'in altındaki 4-5 **Department** birer yönetici (manager) taşır; her Department'ın altında değişken sayıda **Worker** çalışır (bkz. aşağıdaki tam liste). CEO'nun kendine bağlı, Chief'lerin dışında kalan birimleri de var (Executive Office, Strategy Office, PMO, Corporate Development, Investor Relations, Corporate Governance, Board Relations, Internal Audit, ESG, Legal, Executive Assistants) — bunlar Faz 12'de "CEO-doğrudan" (board-dışı, worker'sız, John'un kendi persona genişlemesiyle taşınan) birimler olarak işaretlendi, ayrı Chief/Manager/Worker üçlüsü GEREKTİRMEZ.
+
+### Model-tier ataması ("free as possible" prensibi)
+
+Sistemdeki her seviyeye, hacim/kritiklik dengesine göre bir LiteLLM alias'ı atanır (`infrastructure/litellm/config.yaml`, 2026-07-15'te eklendi):
+
+| Seviye | Sayı | Model alias | Birincil model | Gerekçe |
+|---|---|---|---|---|
+| **CEO** | 1 (John) | `ki-cloud-ceo` | `groq/llama-3.3-70b-versatile` | Tek giriş kapısı, kalite > maliyet; instruct model (tool-call güvenilir, bkz. §11.4/11.8'deki gpt-oss-120b boş-yanıt bulgusu) |
+| **Chief (C-level)** | 9 | `ki-cloud-chief` | `groq/openai/gpt-oss-120b` | Orta hacim, güçlü akıl yürütme; kendi rolünün skill'lerini çağırır |
+| **Department Manager** | ~45 | `ki-cloud-manager` | `groq/openai/gpt-oss-120b` (birincil aynı, Cerebras doğrulanınca değişebilir) | Yüksek hacim ama hâlâ analiz/planlama gerektirir |
+| **Worker** | değişken (department başına birkaç) | `ki-cloud-worker` | `groq/llama-3.1-8b-instant` | En yüksek hacim, görev tekrarlayıcı/uygulamalı — en ucuz/en hızlı model yeterli |
+
+Dördü de AYNI fallback zincirini paylaşır (`groq-llama-3.1-70b` → `openrouter-google-gemma-4-31b-it` → `groq-llama-3.1-8b` → `ollama-llama3.1`) — tek noktadan güvence, her serviste ayrı retry kodu yazılmaz (mevcut `ki-cloud` deseniyle tutarlı).
+
+**Cerebras (yeni araştırılan sağlayıcı, 2026-07-15):** 1M token/gün, 30 rpm, kredi kartsız ücretsiz katman (`llama-3.3-70b`, `qwen-3-32b`, `gpt-oss-120b` modelleri) `config.yaml`'a EKLENDİ ama henüz hiçbir alias'ın birincili/fallback'i YAPILMADI — bu reponun kendi kuralı gereği (bkz. §11.4: "zincire eklenecek her yeni model MUTLAKA tekil curl testiyle doğrulanmalı") `CEREBRAS_API_KEY` sağlanıp gerçek bir çağrıyla doğrulanmadan Manager/Worker tier'ine birincil YAPILMAYACAK. Doğrulanırsa Manager/Worker seviyesi için Groq'tan daha cömert bir günlük limit sunduğundan öncelikli aday budur.
+
+### İletişim mekanizması — kanıtlanmış mimariye göre tasarlandı, aspirasyonel DEĞİL
+
+`AGENTIC_ARCHITECTURE_PLAN.md` §11.8'de SOMUT olarak kanıtlandı: OpenClaw'un `sessions_spawn` (subagent) mekanizması, spawn edilen agent'ın KENDİ MCP sunucusunu (`skills-mcp-<rol>`) YÜKLEMİYOR — bu, "her seviye kendi alt-seviyesini agent olarak spawn eder" (klasik org-chart-as-process-tree) tasarımını GÜVENİLMEZ kılıyor. Bu yüzden 9-Chief/45-Department/Worker hiyerarşisi de John'da zaten ÇALIŞAN deseni miras alır:
+
+1. **Emir (yukarıdan aşağı):** Her seviye, bir alt seviyeye görev verirken KENDİ üstünde ayrı bir agent SPAWN ETMEZ — üst seviyenin agent'ı (John/Chief/Manager), alt seviyenin `skills-mcp-<birim>` sunucusundaki tool'u DOĞRUDAN çağırır (tıpkı John'un bugün CTO/CFO skill'lerini doğrudan çağırdığı gibi, §11.8). Emir, ilgili birimin persona'sını çerçeveleyen bir prompt + skill-tool çağrısı olarak modellenir.
+2. **Rapor (aşağıdan yukarı):** Her çağrının sonucu Memory Layer'a (`core/memory`, `mem_type=department`, `scope_key=f"report:{birim_id}"`) idempotency_key ile yazılır — tıpkı `institutional-memory-digest` skill'inin (COO/Leo) zaten yaptığı özetleme deseninin birim-bazlı genişlemesi. Üst seviye, alt biriminin raporunu bir sonraki çağrısında bağlam olarak Memory'den okur.
+3. **Geliştirme/geri bildirim döngüsü:** CFO'nun bugünkü `cost_flag` kapısı deseni genelleştirilir — her Chief kendi `*_flag` alanını (`cost_flag`, `security_flag`, `data_governance_flag` vb.) skill çıktısına ekleyebilir; John (ya da ilgili üst Chief) bunu okuyup ya onaylar ya da `blocker:{birim_id}` scope'una bir düzeltme talebi yazar — alt birim bir sonraki çağrısında bunu okur. Yeni agent/onay-akışı KODU yazılmaz, var olan Memory Layer + skill `inputs`/`outputs` şeması genişletilir.
+4. **Yatay (Chief-Chief) danışma:** Bugün de olduğu gibi tek orkestratör John'dur — iki Chief'in görüşü gerektiğinde John ikisinin skill'ini SIRAYLA çağırıp sentezler (paralel `sessions_spawn` denemesi §11.8'de başarısız olduğu için tekrar denenmeyecek, OpenClaw bu sınırı gidermeden).
+
+### Tam Chief → Department → (temsili) Worker listesi
+
+| Chief | Department (Manager, `ki-cloud-manager`) | Worker örnekleri (`ki-cloud-worker`) |
+|---|---|---|
+| **COO** | Operations, Customer Success, Support, Procurement, Administration | ops-koordinatör, success-temsilcisi, destek-uzmanı (mevcut Zeynep'in genişlemesi), satın-alma-uzmanı |
+| **CTO** | Engineering (Backend/Frontend/Mobile/Desktop/API), Platform (DevOps/SRE/Cloud/Network), AI Engineering (LLM/Agents/Prompt/RAG/MLOps/Eval), Architecture, QA (Test Otomasyon/Perf/Release) | backend-dev (mevcut Deniz), frontend-dev, mobile-dev, sre-mühendisi, prompt-mühendisi, test-otomasyoncusu (mevcut Burak) |
+| **CFO** | Finance, Accounting, Treasury, Tax, FP&A | muhasebeci, hazine-uzmanı, bütçe-analisti |
+| **CPO** | Product Management, UX/UI, Product Operations, Product Analytics | ürün-yöneticisi, ux-araştırmacı, ui-tasarımcı (mevcut Mert'in genişlemesi) |
+| **CMO** | Brand, Digital Marketing (SEO/SEM/PPC/Email/Sosyal), Content, Growth, Communications/PR | kopyacı (mevcut Ada), seo-uzmanı, sosyal-medya-yöneticisi, video-editör (mevcut Elif) |
+| **CRO** | Sales (SDR/BDR/AE/Enterprise/SMB/Channel), Partnerships, RevOps, Customer Expansion | sdr-temsilcisi, satış-operasyon-analisti, yenileme-uzmanı |
+| **CISO** | SOC, Security Engineering (AppSec/CloudSec/InfraSec/IAM), Governance, Privacy | güvenlik-mühendisi (mevcut Aslı), soc-analisti, gizlilik-uzmanı |
+| **CDO** | Data Engineering, Data Science, BI, AI Data, Data Governance | veri-mühendisi, veri-bilimci, bi-analisti |
+
+**Not — tam kapsam bilerek burada durduruldu:** Kullanıcının istediği ~45 alt-birimin TAMAMI, kendi skill setiyle (`core/skills/skills_registry.py:owner_role` genişlemesi) ve kendi `skills-mcp-<birim>` sunucusuyla somutlaştırılmadı — bu, Faz 12'nin "tasarım" adımı, Faz 13'ün (henüz planlanmadı, kullanıcı onayı gerektirir) "her birime gerçek skill/persona/MCP kaydı" implementasyon adımıdır. Yukarıdaki tablo YÖN gösterir, mevcut 8 worker persona'sı (Deniz/Ada/Emre/Zeynep/Mert/Aslı/Burak/Elif, bkz. `PERSONAS.md`) ilgili Department'lara zaten eşlenebilir durumda.
 
 ## Bilinen sınırlamalar
 

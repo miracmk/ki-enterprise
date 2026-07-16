@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timezone
 
 import httpx
 import nats
@@ -74,6 +75,80 @@ async def executive_review(workflow_name: str, prompt: str, plan: str) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+@activity.defn
+async def persist_decision(payload: dict) -> dict:
+    """Workflow sonucunu (basarili/basarisiz/onay-zaman-asimi) Memory'e kalici
+    kaydeder - activity icinde calistigi icin Temporal'in kendi retry policy'si
+    restart-dayanikliligi saglar (eskiden core/ceo/main.py'de fire-and-forget
+    bir asyncio task'ti - CEO servisi workflow bitmeden restart olursa kayit
+    HIC yazilmazdi). Iki ayri scope_key'e yazar (global + proje-bazli) - IKISI
+    DE FARKLI idempotency_key kullanmali, aksi halde Memory'nin uuid5(idempotency_key)
+    tabanli id uretimi ayni satira cakisir ve ikinci yazim sessizce no-op olur."""
+    workflow_id = payload["workflow_id"]
+    effective_project = payload.get("project") or "unassigned"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={
+                "mem_type": "global", "scope_key": "ceo:decisions", "content": payload,
+                "idempotency_key": f"decision-global:{workflow_id}",
+            },
+        )
+        resp.raise_for_status()
+        resp = await client.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={
+                "mem_type": "project", "scope_key": f"{effective_project}-decisions", "content": payload,
+                "idempotency_key": f"decision:{workflow_id}",
+            },
+        )
+        resp.raise_for_status()
+
+        # Dispatch<->teslim mutabakati: bu is artik "kapali" - core/ceo/main.py'nin
+        # dispatch aninda yazdigi "dispatch:outstanding" kaydinin karsiligi. SLA
+        # watchdog (ceo/main.py) bu kaydin varligina bakarak acik/kapali ayrimi yapar.
+        resp = await client.post(
+            f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+            headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+            json={
+                "mem_type": "global", "scope_key": "dispatch:closed",
+                "content": {
+                    "workflow_id": workflow_id, "status": payload["status"],
+                    "closed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "idempotency_key": f"closed:{workflow_id}",
+            },
+        )
+        resp.raise_for_status()
+
+        # Duzeltici/onleyici faaliyet zincirinin CEO'ya raporlama ayagi: workflow
+        # tamamen basarisiz oldu (activity retry'lari tukendi) veya onay 24 saat
+        # icinde gelmedi - ikisi de CEO'nun gun basi/gun sonu raporunda (Faz B)
+        # gorunmesi gereken somut sorunlardir.
+        is_failed = payload["status"] == "failed"
+        is_approval_timeout = (payload.get("result") or {}).get("status") == "approval_timeout"
+        if is_failed or is_approval_timeout:
+            resp = await client.post(
+                f"{settings.MEMORY_API_URL}/api/v1/memory/store",
+                headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+                json={
+                    "mem_type": "global", "scope_key": "ceo:escalations",
+                    "content": {
+                        "workflow_id": workflow_id, "workflow": payload["workflow"], "project": effective_project,
+                        "type": "approval_timeout" if is_approval_timeout else "workflow_failed",
+                        "detail": payload.get("error") or "Onay 24 saat icinde gelmedi.",
+                        "severity": "medium" if is_approval_timeout else "high",
+                        "escalated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    "idempotency_key": f"escalation:{workflow_id}",
+                },
+            )
+            resp.raise_for_status()
+    return {"stored": True}
 
 
 @activity.defn

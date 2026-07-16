@@ -15,6 +15,10 @@ class CEOSettings(BaseSettings):
     MEMORY_API_URL: str = "http://localhost:5001"
 
     REPORT_CONSUMER_DURABLE: str = "ceo-report-collector"
+    # Bir dispatch'in "yayinlandi" ile "yapildi" arasindaki mutabakati icin -
+    # bu sureden uzun suredir kapanmamis isler SLA ihlali olarak escalate edilir.
+    DISPATCH_SLA_SECONDS: int = 1800
+    SLA_WATCHDOG_INTERVAL_SECONDS: int = 300
     # Tek dogruluk kaynagi core.env'de - core/projects ile paylasilir.
     PROJECTS: list[str]
 
@@ -22,6 +26,10 @@ class CEOSettings(BaseSettings):
     # Dispatch/approve/status uclarini ETKILEMEZ - onlar hala yapisal/programatik.
     CEO_NAME: str = "John"
     AI_GATEWAY_URL: str = "http://localhost:5002"
+
+    # Tek dogruluk kaynagi core.env'de (bkz. yorum orada) - core/departments,
+    # core/workflow, core/dashboard ile paylasilir.
+    WORKFLOW_TO_DEPARTMENT: dict[str, str]
 
     # Gercek Ki Ecosystem dizini (apps/ + websites/, klasor bazinda) - PROJECTS
     # (core.env, formal butce/roadmap takibi yapilan projeler) ile AYRI bir

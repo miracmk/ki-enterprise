@@ -11,5 +11,14 @@ class ExecutiveSettings(BaseSettings):
     # (bkz. infrastructure/litellm/config.yaml). Yerel Ollama kullanilmaz.
     REVIEW_MODEL: str = "ki-cloud"
 
+    # Faz A5, Katman 2 - Chief QC: worker'in "completed_low_quality" isaretledigi
+    # ciktilari ilgili Chief'in bakis acisiyla BAGIMSIZ yeniden degerlendirir.
+    NATS_URL: str = "nats://localhost:14222"
+    QC_CONSUMER_DURABLE: str = "executive-qc"
+    QUALITY_MIN_SCORE: int = 60
+    MAX_REVISIONS: int = 1
+    # Tek dogruluk kaynagi core.env'de - core/dashboard ile paylasilir.
+    DEPARTMENT_TO_CHIEF: dict[str, str]
+
 
 settings = ExecutiveSettings()

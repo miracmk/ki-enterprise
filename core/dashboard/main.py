@@ -30,23 +30,8 @@ from static_ui import render_dashboard_html
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard")
 
-# Tek dogruluk kaynagi: core/workflow/workflows.py:WORKFLOW_NAMES /
-# core/ceo/main.py:VALID_WORKFLOWS (ayri servis/venv oldugu icin dogrudan
-# import edilemiyor, elle senkron tutulur - 2026-07-16 dispatch UI'i icin
-# eklendi). Yeni bir departman eklenirse UCUNDE de guncellenmeli.
-DISPATCHABLE_WORKFLOWS = [
-    "new_project", "feature_request", "marketing_campaign",
-    "customer_support", "research_request", "deployment",
-    "finance", "security", "design", "video", "operations", "tester",
-    "customer_success", "procurement", "administration",
-    "platform", "ai_engineering", "architecture",
-    "accounting", "treasury", "tax", "fp_a",
-    "product_management", "product_operations", "product_analytics",
-    "brand", "digital_marketing", "communications_pr",
-    "sales", "partnerships", "revops", "customer_expansion",
-    "soc", "governance", "privacy",
-    "data_engineering", "data_science", "bi", "ai_data", "data_governance",
-]
+# Tek dogruluk kaynagi core.env:WORKFLOW_TO_DEPARTMENT'tir - dinamik turetilir.
+DISPATCHABLE_WORKFLOWS = list(settings.WORKFLOW_TO_DEPARTMENT.keys())
 
 ALL_SERVICES = {
     "ceo": settings.CEO_API_URL,
@@ -58,6 +43,7 @@ ALL_SERVICES = {
     "projects": settings.PROJECTS_API_URL,
     "skills": settings.SKILLS_API_URL,
     "finance": settings.FINANCE_API_URL,
+    "composio": settings.COMPOSIO_API_URL,
 }
 
 CHIEFS = ["ceo", "coo", "cto", "cfo", "cpo", "cmo", "cro", "ciso", "cdo"]
@@ -554,6 +540,16 @@ async def system_dashboard():
         "total_count": len(ALL_SERVICES),
         "overall_status": "ok" if healthy_count == len(ALL_SERVICES) else "degraded",
     }
+
+
+@app.get("/api/v1/dashboard/integrations", dependencies=[Depends(verify_api_key)])
+async def integrations_dashboard():
+    """Composio uzerinden baglanan tum toolkit/app'lerin (Gmail, Slack, GitHub, vb.)
+    ozet gorunumu - core/composio servisinin periyodik senkronladigi cache'i proxy'ler."""
+    data, err = await _safe_get(app.state.http, f"{settings.COMPOSIO_API_URL}/api/v1/composio/connections")
+    if err is not None:
+        return {"total": 0, "by_toolkit": {}, "accounts": [], "error": err}
+    return data
 
 
 @app.get("/api/v1/dashboard/workflows", dependencies=[Depends(verify_api_key)])

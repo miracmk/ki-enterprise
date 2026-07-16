@@ -34,6 +34,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import nats
@@ -45,9 +46,32 @@ from config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("departments")
 
+HERE = Path(__file__).parent
+
 DEPARTMENTS = [
+    # Eski 9 (Phase 4'ten) - degismedi.
     "development", "research", "marketing", "finance",
     "security", "support", "design", "video", "operations",
+    # 2026-07-15 eklendi - 9-Chief org genislemesi (bkz. ORG_CHART.md,
+    # AGENTIC_ARCHITECTURE_PLAN.md SS14). Chief->departman eslemesi icin
+    # core.env:DEPARTMENT_TO_CHIEF tek dogruluk kaynagidir.
+    "tester",  # CTO/QA - onceden worker persona'si vardi ama bu listede yoktu, tutarlilik icin eklendi
+    # COO
+    "customer_success", "procurement", "administration",
+    # CTO
+    "platform", "ai_engineering", "architecture",
+    # CFO
+    "accounting", "treasury", "tax", "fp_a",
+    # CPO
+    "product_management", "product_operations", "product_analytics",
+    # CMO
+    "brand", "digital_marketing", "communications_pr",
+    # CRO
+    "sales", "partnerships", "revops", "customer_expansion",
+    # CISO
+    "soc", "governance", "privacy",
+    # CDO
+    "data_engineering", "data_science", "bi", "ai_data", "data_governance",
 ]
 
 # Mevcut workflow'lar (Phase 1) ile departmanlar arasindaki eslesme. Eslesmeyen
@@ -68,6 +92,7 @@ WORKFLOW_TO_DEPARTMENT = settings.WORKFLOW_TO_DEPARTMENT
 
 TASK_MAX_DELIVER = 5
 DLQ_SCOPE_KEY = "dlq:department-manager"
+DLQ_FALLBACK_FILE = HERE / "dlq_fallback.jsonl"
 
 
 async def verify_api_key(authorization: str = Header(default="")):
@@ -100,15 +125,30 @@ async def _report(nc: nats.NATS, department: str, payload: dict, msg_id: str):
     await js.publish(f"report.{department}", json.dumps(payload).encode(), headers={"Nats-Msg-Id": msg_id})
 
 
-async def _send_to_dlq(http: httpx.AsyncClient, subject: str, num_delivered: int, reason: str, raw_data: str):
+async def _send_to_dlq(http: httpx.AsyncClient, subject: str, num_delivered: int, reason: str, raw_data: str) -> bool:
     logger.critical(f"DLQ: mesaj {num_delivered} denemede kalici olarak basarisiz oldu ({subject}): {reason}")
-    await _remember(http, "global", DLQ_SCOPE_KEY, {
+    entry = {
         "subject": subject,
         "num_delivered": num_delivered,
         "reason": reason,
         "raw_data": raw_data[:2000],
         "failed_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    ok = await _remember(http, "global", DLQ_SCOPE_KEY, entry)
+    if ok:
+        return True
+    # Memory Layer'a da yazilamadi (dongusel bagimlilik: DLQ'nun kendisi Memory'e
+    # bagimliydi) - yerel dosyaya (append-only JSONL) fallback yaz ki mesaj izsiz
+    # kaybolmasin. Ayri bir tuketici (Faz B) bu dosyayi okuyup Memory geri gelince
+    # tekrar deneyebilir.
+    try:
+        with open(DLQ_FALLBACK_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        logger.warning(f"DLQ Memory'e yazilamadi, yerel dosyaya fallback yapildi: {DLQ_FALLBACK_FILE}")
+        return True
+    except OSError as e:
+        logger.critical(f"DLQ hem Memory'e hem yerel dosyaya yazilamadi, mesaj KAYBOLABILIR: {e}")
+        return False
 
 
 async def _task_supervisor(nc: nats.NATS, http: httpx.AsyncClient, heartbeat: dict):
@@ -181,8 +221,11 @@ async def _process_one(nc: nats.NATS, http: httpx.AsyncClient, msg):
 
     if not ok:
         if is_last_attempt:
-            await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, "Memory'e yazilamadi (son deneme)", raw)
-            await msg.ack()
+            dlq_ok = await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, "Memory'e yazilamadi (son deneme)", raw)
+            if dlq_ok:
+                await msg.ack()
+            else:
+                await msg.nak(delay=30)
         else:
             await msg.nak(delay=5)
         return
@@ -205,8 +248,11 @@ async def _process_one(nc: nats.NATS, http: httpx.AsyncClient, msg):
         }, msg_id=f"report:{source_id}")
     except Exception as e:
         if is_last_attempt:
-            await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, f"Rapor yayinlanamadi (son deneme): {e}", raw)
-            await msg.ack()
+            dlq_ok = await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, f"Rapor yayinlanamadi (son deneme): {e}", raw)
+            if dlq_ok:
+                await msg.ack()
+            else:
+                await msg.nak(delay=30)
         else:
             logger.warning(f"Rapor yayinlanamadi ({department}): {e}")
             await msg.nak(delay=5)

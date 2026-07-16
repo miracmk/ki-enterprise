@@ -20,7 +20,7 @@ import logging
 import secrets
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -37,24 +37,41 @@ from config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ceo")
 
-VALID_WORKFLOWS = [
-    # Tek dogruluk kaynagi core/workflow/workflows.py:WORKFLOW_NAMES'tir (ayri servis/venv
-    # oldugu icin dogrudan import edilemiyor) - burada elle senkron tutulur.
-    "new_project", "feature_request", "marketing_campaign",
-    "customer_support", "research_request", "deployment",
-]
+HERE = Path(__file__).parent
+
+# Tek dogruluk kaynagi core.env:WORKFLOW_TO_DEPARTMENT'tir - dinamik turetilir,
+# artik elle senkron tutulmuyor (drift imkansiz).
+VALID_WORKFLOWS = list(settings.WORKFLOW_TO_DEPARTMENT.keys())
 
 REPORT_MAX_DELIVER = 5
 DLQ_SCOPE_KEY = "dlq:ceo-report-collector"
+DLQ_FALLBACK_FILE = HERE / "dlq_fallback.jsonl"
 
 
-async def _send_to_dlq(http: httpx.AsyncClient, subject: str, num_delivered: int, reason: str, raw_data: str):
+async def _send_to_dlq(http: httpx.AsyncClient, subject: str, num_delivered: int, reason: str, raw_data: str) -> bool:
     logger.critical(f"DLQ: rapor mesaji {num_delivered} denemede kalici olarak basarisiz oldu ({subject}): {reason}")
-    await _remember(http, "global", DLQ_SCOPE_KEY, {
-        "subject": subject, "num_delivered": num_delivered, "reason": reason,
+    entry = {
+        "subject": subject,
+        "num_delivered": num_delivered,
+        "reason": reason,
         "raw_data": raw_data[:2000],
         "failed_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    ok = await _remember(http, "global", DLQ_SCOPE_KEY, entry)
+    if ok:
+        return True
+    # Memory Layer'a da yazilamadi (dongusel bagimlilik: DLQ'nun kendisi Memory'e
+    # bagimliydi) - yerel dosyaya (append-only JSONL) fallback yaz ki mesaj izsiz
+    # kaybolmasin. Ayri bir tuketici (Faz B) bu dosyayi okuyup Memory geri gelince
+    # tekrar deneyebilir.
+    try:
+        with open(DLQ_FALLBACK_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        logger.warning(f"DLQ Memory'e yazilamadi, yerel dosyaya fallback yapildi: {DLQ_FALLBACK_FILE}")
+        return True
+    except OSError as e:
+        logger.critical(f"DLQ hem Memory'e hem yerel dosyaya yazilamadi, mesaj KAYBOLABILIR: {e}")
+        return False
 
 
 async def _collect_reports_loop(nc: nats.NATS, http: httpx.AsyncClient, heartbeat: dict):
@@ -103,8 +120,11 @@ async def _collect_reports_loop(nc: nats.NATS, http: httpx.AsyncClient, heartbea
             if ok:
                 await msg.ack()
             elif is_last_attempt:
-                await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, "Memory'e yazilamadi (son deneme)", raw)
-                await msg.ack()
+                dlq_ok = await _send_to_dlq(http, msg.subject, msg.metadata.num_delivered, "Memory'e yazilamadi (son deneme)", raw)
+                if dlq_ok:
+                    await msg.ack()
+                else:
+                    await msg.nak(delay=30)
             else:
                 # Memory Layer'a yazilamadi - mesaji dusurme, tekrar denensin.
                 await msg.nak(delay=5)
@@ -120,6 +140,78 @@ async def _report_collector_supervisor(nc: nats.NATS, http: httpx.AsyncClient, h
             raise
         except Exception as e:
             logger.error(f"Rapor toplayici coktu, 5sn sonra yeniden baslatiliyor: {e}")
+            await asyncio.sleep(5)
+
+
+async def _sla_watchdog_loop(http: httpx.AsyncClient, heartbeat: dict):
+    """Periyodik olarak "dispatch:outstanding" kaydedilen isleri tarar - her biri
+    icin "dispatch:closed" (bkz. core/workflow/activities.py:persist_decision)
+    kaydi var mi diye /memory/exists ile bakar. SLA suresi gecmis ve hala
+    kapanmamis bir is bulunursa "ceo:escalations"a yazilir - idempotency_key
+    workflow_id'ye sabitlendigi icin ayni ihlal tekrar tekrar escalate edilmez
+    (ON CONFLICT DO UPDATE no-op)."""
+    while True:
+        heartbeat["last_loop"] = datetime.now(timezone.utc)
+        try:
+            resp = await http.get(
+                f"{settings.MEMORY_API_URL}/api/v1/memory/retrieve",
+                headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+                params={"mem_type": "global", "scope_key": "dispatch:outstanding", "limit": 200},
+            )
+            resp.raise_for_status()
+            outstanding = [i["content"] for i in resp.json().get("items", [])]
+        except httpx.HTTPError as e:
+            logger.warning(f"SLA watchdog: dispatch:outstanding okunamadi: {e}")
+            await asyncio.sleep(settings.SLA_WATCHDOG_INTERVAL_SECONDS)
+            continue
+
+        now = datetime.now(timezone.utc)
+        for item in outstanding:
+            workflow_id = item.get("workflow_id")
+            expected_by = item.get("expected_by")
+            if not workflow_id or not expected_by:
+                continue
+            try:
+                if datetime.fromisoformat(expected_by) >= now:
+                    continue
+            except ValueError:
+                continue
+
+            try:
+                exists_resp = await http.get(
+                    f"{settings.MEMORY_API_URL}/api/v1/memory/exists",
+                    headers={"Authorization": f"Bearer {settings.INTERNAL_API_KEY}"},
+                    params={"idempotency_key": f"closed:{workflow_id}"},
+                )
+                exists_resp.raise_for_status()
+                if exists_resp.json().get("exists"):
+                    continue  # is zaten kapanmis, sadece "outstanding" kaydi eski
+            except httpx.HTTPError as e:
+                logger.warning(f"SLA watchdog: kapanma kontrolu basarisiz ({workflow_id}): {e}")
+                continue
+
+            await _remember(http, "global", "ceo:escalations", {
+                "workflow_id": workflow_id, "workflow": item.get("workflow"), "project": item.get("project"),
+                "type": "sla_breach",
+                "detail": f"Dispatch {expected_by} tarihine kadar kapanmasi bekleniyordu, hala acik.",
+                "severity": "high",
+                "escalated_at": now.isoformat(),
+            }, idempotency_key=f"escalation-sla:{workflow_id}")
+            logger.warning(f"SLA ihlali: {workflow_id} ({item.get('workflow')}) hala acik.")
+
+        await asyncio.sleep(settings.SLA_WATCHDOG_INTERVAL_SECONDS)
+
+
+async def _sla_watchdog_supervisor(http: httpx.AsyncClient, heartbeat: dict):
+    """_sla_watchdog_loop coker/baslangicta patlarsa sessizce olmesin diye
+    loglayip backoff ile yeniden baslatir (diger supervisor'larla ayni desen)."""
+    while True:
+        try:
+            await _sla_watchdog_loop(http, heartbeat)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"SLA watchdog coktu, 5sn sonra yeniden baslatiliyor: {e}")
             await asyncio.sleep(5)
 
 
@@ -231,27 +323,15 @@ async def _memory_get(http: httpx.AsyncClient, mem_type: str, scope_key: str, li
 
 
 async def _wait_and_remember(handle, workflow_name: str, prompt: str, project: str, initiated_by: str, http: httpx.AsyncClient):
-    """Workflow arka planda tamamlaninca sonucu Memory'ye yazar. Dispatch
-    endpoint'i bunu beklemez (fire-and-forget)."""
-    effective_project = project or "unassigned"
+    """Workflow'un sonucunu bekler. Karar kaydi (ceo:decisions / {project}-decisions)
+    ARTIK burada yazilmiyor - core/workflow/workflows.py:_run icinde, persist_decision
+    activity'si ile (Temporal retry policy'sinin sagladigi restart-dayanikliligiyla)
+    yaziliyor. Bu fonksiyon sadece sonucu loglar (ileride: outstanding-dispatch
+    defterini "closed" olarak isaretlemek icin kullanilacak, bkz. Faz A3/A4)."""
     try:
-        result = await handle.result()
-        content = {
-            "workflow_id": handle.id, "workflow": workflow_name, "project": project,
-            "initiated_by": initiated_by, "prompt": prompt, "status": "completed", "result": result,
-        }
+        await handle.result()
     except Exception as e:
         logger.error(f"Workflow basarisiz oldu ({handle.id}): {e}")
-        content = {
-            "workflow_id": handle.id, "workflow": workflow_name, "project": project,
-            "initiated_by": initiated_by, "prompt": prompt, "status": "failed", "error": str(e),
-        }
-
-    await _remember(http, "global", "ceo:decisions", content)
-    # PROJE-BAZLI ayrica kaydedilir (core/projects, Phase 6 butce/rapor gorunumu
-    # icin) - ceo:decisions TUM projelerin ortak havuzu oldugu icin (bkz.
-    # core/departments'teki ayni gerekce).
-    await _remember(http, "project", f"{effective_project}-decisions", content, idempotency_key=f"decision:{handle.id}")
 
 
 @asynccontextmanager
@@ -263,11 +343,17 @@ async def lifespan(app: FastAPI):
     app.state.http = httpx.AsyncClient(timeout=30.0)
     app.state.background_tasks: set[asyncio.Task] = set()
     app.state.heartbeat = {"last_loop": None}
+    app.state.sla_heartbeat = {"last_loop": None}
 
     report_task = asyncio.create_task(_report_collector_supervisor(app.state.nc, app.state.http, app.state.heartbeat))
     app.state.report_task = report_task
     app.state.background_tasks.add(report_task)
     report_task.add_done_callback(app.state.background_tasks.discard)
+
+    sla_task = asyncio.create_task(_sla_watchdog_supervisor(app.state.http, app.state.sla_heartbeat))
+    app.state.sla_task = sla_task
+    app.state.background_tasks.add(sla_task)
+    sla_task.add_done_callback(app.state.background_tasks.discard)
 
     logger.info("CEO Ajani NATS + Temporal'a baglandi.")
     yield
@@ -465,7 +551,7 @@ async def dispatch_project(request: DispatchRequest, idempotency_key: str = Head
     try:
         handle = await app.state.temporal.start_workflow(
             request.workflow,
-            args=[request.prompt, request.project],
+            args=[request.prompt, request.project, request.initiated_by],
             id=workflow_id,
             task_queue=settings.TASK_QUEUE,
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
@@ -477,6 +563,18 @@ async def dispatch_project(request: DispatchRequest, idempotency_key: str = Head
         status = "already_dispatched"
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Workflow baslatilamadi: {e}")
+
+    # Dispatch<->teslim mutabakati (Faz A3): "yayinlandi" ile "yapildi" arasindaki
+    # bosluk burada acilir - SLA watchdog (_sla_watchdog_loop) bu kaydin belirli
+    # sure kapanmadan kalip kalmadigini izler. Kapanis, workflow'un kendisi
+    # icinde persist_decision activity'si tarafindan yazilir (bkz. activities.py).
+    now = datetime.now(timezone.utc)
+    await _remember(app.state.http, "global", "dispatch:outstanding", {
+        "workflow_id": workflow_id, "workflow": request.workflow, "project": request.project,
+        "prompt": request.prompt, "initiated_by": request.initiated_by,
+        "dispatched_at": now.isoformat(),
+        "expected_by": (now + timedelta(seconds=settings.DISPATCH_SLA_SECONDS)).isoformat(),
+    }, idempotency_key=f"outstanding:{workflow_id}")
 
     task = asyncio.create_task(_wait_and_remember(handle, request.workflow, request.prompt, request.project, request.initiated_by, app.state.http))
     app.state.background_tasks.add(task)
@@ -537,6 +635,12 @@ async def ecosystem_scan():
     return _scan_ecosystem()
 
 
+@app.get("/api/v1/ceo/valid-workflows", dependencies=[Depends(verify_api_key)])
+async def valid_workflows():
+    """Tek dogruluk kaynagi core.env'den turetilen gecerli workflow adlari."""
+    return {"workflows": VALID_WORKFLOWS}
+
+
 @app.get("/api/v1/ceo/workflows", dependencies=[Depends(verify_api_key)])
 async def list_workflows_endpoint(status: str = None):
     """Calisan/bekleyen/tamamlanan isleri Temporal'dan dogrudan listeler -
@@ -577,4 +681,16 @@ async def health():
     last_loop = heartbeat.get("last_loop")
     heartbeat_ok = last_loop is not None and (datetime.now(timezone.utc) - last_loop).total_seconds() < 60
     checks["report_collector"] = task_alive and heartbeat_ok
+
+    sla_task = getattr(app.state, "sla_task", None)
+    sla_task_alive = sla_task is not None and not sla_task.done()
+    sla_heartbeat = getattr(app.state, "sla_heartbeat", {})
+    sla_last_loop = sla_heartbeat.get("last_loop")
+    # Watchdog dongusu SLA_WATCHDOG_INTERVAL_SECONDS'ta bir tikler (varsayilan 300s) -
+    # report_collector'in aksine kisa "<60s" esigi burada YANLIS pozitif verir.
+    sla_heartbeat_ok = sla_last_loop is not None and (
+        datetime.now(timezone.utc) - sla_last_loop
+    ).total_seconds() < settings.SLA_WATCHDOG_INTERVAL_SECONDS * 3
+    checks["sla_watchdog"] = sla_task_alive and sla_heartbeat_ok
+
     return {"status": "ok" if all(checks.values()) else "degraded", "checks": checks}

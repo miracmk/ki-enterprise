@@ -160,7 +160,7 @@ const CHIEFS = [
   {key:"cfo", label:"CFO"}, {key:"cpo", label:"CPO"}, {key:"cmo", label:"CMO"},
   {key:"cro", label:"CRO"}, {key:"ciso", label:"CISO"}, {key:"cdo", label:"CDO"},
 ];
-const TABS = [...CHIEFS.map(c => ({key:"chief:"+c.key, label:c.label})), {key:"system", label:"System"}, {key:"dispatch", label:"Gorev Gonder"}];
+const TABS = [...CHIEFS.map(c => ({key:"chief:"+c.key, label:c.label})), {key:"system", label:"System"}, {key:"dispatch", label:"Gorev Gonder"}, {key:"integrations", label:"Integrations"}];
 
 let TOKEN = sessionStorage.getItem("ki_dashboard_token") || "";
 let activeTab = "chief:ceo";
@@ -252,6 +252,8 @@ function loadActiveTab() {
     loadSystem().then(done);
   } else if (activeTab === "dispatch") {
     loadDispatch().then(done);
+  } else if (activeTab === "integrations") {
+    loadIntegrations().then(done);
   }
 }
 
@@ -386,6 +388,27 @@ async function loadSystem() {
     let html = `<div class="card"><h2>System</h2><div class="stat-row"><div class="stat"><div class="n">${d.healthy_count}/${d.total_count}</div><div class="l">servis saglikli</div></div></div><table>`;
     for (const s of d.services) html += `<tr><td>${s.service}</td><td>${badge(s.status)}</td></tr>`;
     html += "</table></div>";
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = `<div class="err">Yuklenemedi: ${e.message}</div>`; }
+}
+
+async function loadIntegrations() {
+  const el = document.getElementById("panel-integrations");
+  try {
+    const d = await getJSON("/api/v1/dashboard/integrations");
+    if (d.error) { el.innerHTML = `<div class="card"><h2>Integrations (Composio)</h2><div class="err">Composio servisine erisilemedi: ${d.error}</div></div>`; return; }
+    const toolkitRows = Object.entries(d.by_toolkit || {}).sort((a, b) => b[1] - a[1]);
+    let html = `<div class="card"><h2>Integrations (Composio)</h2>
+      <div class="stat-row">
+        <div class="stat"><div class="n">${d.total ?? 0}</div><div class="l">bagli hesap</div></div>
+        <div class="stat"><div class="n">${toolkitRows.length}</div><div class="l">farkli app/toolkit</div></div>
+      </div>
+      <table><tr><th>App / Toolkit</th><th>Bagli hesap sayisi</th></tr>`;
+    if (!toolkitRows.length) html += `<tr><td colspan="2">Henuz bagli app yok.</td></tr>`;
+    for (const [toolkit, count] of toolkitRows) html += `<tr><td>${toolkit}</td><td>${count}</td></tr>`;
+    html += `</table>
+      <div class="hint">Kaynak: core/composio servisi, saatlik periyodik senkron. Yeni bir app baglamak icin CEO/Chief'e "composio ile X'e baglan" seklinde talep iletin.</div>
+    </div>`;
     el.innerHTML = html;
   } catch (e) { el.innerHTML = `<div class="err">Yuklenemedi: ${e.message}</div>`; }
 }
